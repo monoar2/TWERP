@@ -1,0 +1,11 @@
+{
+  "expo": {
+    "name": "ERP",
+    "slug": "erp-mobile",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "ios": { "bundleIdentifier": "mx.erp.mobile", "supportsTablet": true },
+    "android": { "package": "mx.erp.mobile" }
+  }
+}
