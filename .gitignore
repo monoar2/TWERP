@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.next/
+out/
+.expo/
+.env
+*.log
+.DS_Store
+apps/desktop/src-tauri/target/
+apps/desktop/src-tauri/gen/
+coverage/

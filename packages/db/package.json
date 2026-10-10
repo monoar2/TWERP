@@ -1,0 +1,24 @@
+{
+  "name": "@erp/db",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Postgres schema, migrations and reference-data seed for the ERP",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" }
+  },
+  "files": ["dist", "migrations"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "migrate": "tsx src/cli/migrate.ts",
+    "seed": "tsx src/cli/seed.ts",
+    "load-sat-catalog": "tsx src/cli/load-sat-catalog.ts"
+  },
+  "dependencies": {
+    "@erp/mx": "workspace:*",
+    "postgres": "^3.4.9"
+  }
+}
