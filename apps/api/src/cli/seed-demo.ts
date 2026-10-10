@@ -101,8 +101,8 @@ try {
         continue;
       }
       const [inv] = await tx`SELECT total FROM sales_invoices WHERE id = ${id}`;
-      if (!ppd || offset > 30) {
-        await registerCustomerPayment(tx, { invoiceId: id, bankAccountId: bank!.id, amount: inv!.total, paidOn: day(Math.max(0, offset - (ppd ? 20 : 0))) });
+      if (!ppd || offset > 15) {
+        await registerCustomerPayment(tx, { invoiceId: id, bankAccountId: bank!.id, amount: inv!.total, paidOn: day(Math.max(0, offset - (ppd ? 12 : 0))) });
       }
     }
   });

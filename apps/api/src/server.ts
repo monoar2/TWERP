@@ -10,7 +10,8 @@ import { inventoryRoutes } from "./routes/inventory.js";
 
 export async function buildServer(ctx: AppContext, opts: { logger?: boolean } = {}): Promise<FastifyInstance> {
   const app = Fastify({ logger: opts.logger ?? false });
-  await app.register(cors, { origin: true });
+  // Expose content-disposition so browsers can read download file names.
+  await app.register(cors, { origin: true, exposedHeaders: ["content-disposition"] });
 
   app.get("/health", async () => ({ ok: true }));
 

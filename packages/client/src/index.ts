@@ -122,7 +122,7 @@ export function createClient(opts: ClientOptions) {
     satCatalogs: () => get<SatCatalogs>("/sat/catalogs"),
     searchProdServ: (q: string) => get<CatalogEntry[]>(`/sat/prodserv${qs({ q })}`),
     company: () => get<Record<string, unknown> | null>("/company"),
-    saveCompany: (b: { rfc: string; razonSocial: string; regimenFiscal: string; codigoPostal: string; invoiceSerie?: string }) => put("/company", b),
+    saveCompany: (b: { rfc: string; razonSocial: string; regimenFiscal: string; codigoPostal: string; invoiceSerie?: string; allowNegativeStock?: boolean }) => put("/company", b),
     dashboard: () => get<Dashboard>("/dashboard"),
 
     thirdParties: (p: { role?: "customer" | "supplier"; q?: string } = {}) => get<ThirdParty[]>(`/third-parties${qs(p)}`),
@@ -157,6 +157,7 @@ export function createClient(opts: ClientOptions) {
     collectPayment: (id: number, b: { bankAccountId: number; amount: number | string; paidOn?: string; formaPago?: string; reference?: string }) => post(`/sales-invoices/${id}/payments`, b),
 
     supplierInvoices: () => get<SupplierInvoice[]>("/supplier-invoices"),
+    supplierInvoice: (id: number) => get<SupplierInvoice & { lines: Array<{ id: number; line_no: number; product_id: number | null; account_id: number | null; description: string; qty: string; unit_price: Money; base: Money; iva_amount: Money; ret_iva_amount: Money; ret_isr_amount: Money; total: Money }> }>(`/supplier-invoices/${id}`),
     createSupplierInvoice: (b: { thirdPartyId: number; warehouseId?: number; supplierRef?: string; uuid?: string; issueDate?: string; metodoPago?: "PUE" | "PPD"; lines: SupplierLineInput[] }) =>
       post<{ id: number }>("/supplier-invoices", b),
     validateSupplierInvoice: (id: number) => post(`/supplier-invoices/${id}/validate`),
