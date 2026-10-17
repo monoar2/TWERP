@@ -10,5 +10,8 @@ export interface AppContext {
   messages?: MessagesApi;
   aiModel: string;
   pac: PacProvider;
-  apiToken?: string;
+  /** ERP_SECRET_KEY: encrypts the stored CSD private key and password. */
+  secretKey?: Buffer;
+  /** IANA time zone of the issuing location, used for the CFDI Fecha. */
+  timezone: string;
 }

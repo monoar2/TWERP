@@ -4,6 +4,7 @@ import { SandboxPac } from "../services/pac.js";
 import { registerCustomerPayment, registerSupplierPayment } from "../services/payments.js";
 import { createSupplierInvoice, validateSupplierInvoice } from "../services/purchases.js";
 import { createSalesInvoice, issueSalesInvoice } from "../services/sales.js";
+import { createUser } from "../services/users.js";
 
 /**
  * Demo data for trying the ERP and the AI queries: customers, suppliers,
@@ -94,7 +95,7 @@ try {
         issueDate: `${day(offset)} 11:30:00`, lines,
       });
       try {
-        await tx.savepoint(() => issueSalesInvoice(tx, id, pac));
+        await tx.savepoint(() => issueSalesInvoice(tx, id, { pac, timezone: "America/Mexico_City" }));
       } catch {
         // Not enough stock for this random order: drop the draft.
         await tx`DELETE FROM sales_invoices WHERE id = ${id}`;
@@ -108,6 +109,12 @@ try {
   });
   const [s] = await sql`SELECT count(*)::int AS invoices, coalesce(sum(total), 0) AS total FROM sales_invoices WHERE status = 'stamped'`;
   console.log(`Demo data loaded: ${s!.invoices} stamped invoices for ${s!.total} MXN`);
+  const [users] = await sql`SELECT count(*)::int AS n FROM users`;
+  if (users!.n === 0) {
+    // Fixed demo password: only for a demo database, never for real data.
+    await createUser(sql, { email: "admin@demo.mx", name: "Administrador demo", role: "admin", password: "demo-erp-2026" });
+    console.log("Demo login: admin@demo.mx / demo-erp-2026");
+  }
 } finally {
   await sql.end();
 }

@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { call, createTestEnv, type TestEnv } from "./helpers.js";
+import { call, createTestEnv, inject, type TestEnv } from "./helpers.js";
 
 let env: TestEnv;
 const ids = { warehouse: 0, bank: 0, customer: 0, supplier: 0, laptop: 0, service: 0, invoice: 0, purchase1: 0 };
@@ -61,7 +61,7 @@ describe("sales invoice (CFDI 4.0)", () => {
       thirdPartyId: ids.customer, warehouseId: ids.warehouse, metodoPago: "PUE", formaPago: "03",
       lines: [{ productId: ids.laptop, qty: 999 }],
     });
-    const res = await app.inject({ method: "POST", url: `/sales-invoices/${id}/issue` });
+    const res = await inject(app, { method: "POST", url: `/sales-invoices/${id}/issue` });
     expect(res.statusCode).toBe(409);
     // The failed attempt must not consume a folio or leave stock moved.
     const product = await call(app, "GET", `/products/${ids.laptop}`);
@@ -114,7 +114,7 @@ describe("sales invoice (CFDI 4.0)", () => {
   });
 
   it("refuses to cancel an invoice that has payments", async () => {
-    const res = await env.app.inject({ method: "POST", url: `/sales-invoices/${ids.invoice}/cancel`, payload: { motivo: "02" } });
+    const res = await inject(env.app, { method: "POST", url: `/sales-invoices/${ids.invoice}/cancel`, payload: { motivo: "02" } });
     expect(res.statusCode).toBe(409);
   });
 });
@@ -137,7 +137,7 @@ describe("tax reports and SAT electronic accounting", () => {
     expect(balanza).toContain('NumCta="105.01"');
     const polizas = await call<string>(app, "GET", `/sat/electronic-accounting/polizas?year=${year}&month=${month}&tipoSolicitud=AF&numOrden=ABC6912345/12`);
     expect(polizas).toContain("<PLZ:CompNal");
-    const missing = await app.inject({ method: "GET", url: `/sat/electronic-accounting/polizas?year=${year}&month=${month}&tipoSolicitud=AF` });
+    const missing = await inject(app, { method: "GET", url: `/sat/electronic-accounting/polizas?year=${year}&month=${month}&tipoSolicitud=AF` });
     expect(missing.statusCode).toBe(400);
   });
 
@@ -150,7 +150,7 @@ describe("tax reports and SAT electronic accounting", () => {
 
 describe("accounting integrity", () => {
   it("rejects unbalanced manual entries", async () => {
-    const res = await env.app.inject({
+    const res = await inject(env.app, {
       method: "POST", url: "/journal-entries",
       payload: { date: today, concept: "Descuadre", lines: [{ accountCode: "601.84", debit: 100 }, { accountCode: "102.01", credit: 90 }] },
     });
@@ -158,7 +158,7 @@ describe("accounting integrity", () => {
   });
 
   it("rejects postings to summary accounts", async () => {
-    const res = await env.app.inject({
+    const res = await inject(env.app, {
       method: "POST", url: "/journal-entries",
       payload: { date: today, concept: "Cuenta de mayor", lines: [{ accountCode: "601", debit: 100 }, { accountCode: "102.01", credit: 100 }] },
     });
@@ -168,7 +168,7 @@ describe("accounting integrity", () => {
   it("blocks postings in closed periods", async () => {
     const { app } = env;
     await call(app, "POST", `/periods/2020/1/close`);
-    const res = await app.inject({
+    const res = await inject(app, {
       method: "POST", url: "/journal-entries",
       payload: { date: "2020-01-15", concept: "Periodo cerrado", lines: [{ accountCode: "601.84", debit: 100 }, { accountCode: "102.01", credit: 100 }] },
     });

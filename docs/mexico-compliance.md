@@ -19,11 +19,17 @@ Pendiente: firma y empaquetado ZIP de los XML para el envío al buzón tributari
 
 ## CFDI 4.0
 
-- Construcción del XML sin sellar con Emisor, Receptor (incluido `DomicilioFiscalReceptor` y `RegimenFiscalReceptor`), Conceptos con `ObjetoImp`, impuestos trasladados y retenidos por concepto y agrupados en el comprobante, `InformacionGlobal` y `CfdiRelacionados`. (`packages/mx/src/cfdi40.ts`)
+- Construcción del XML con Emisor, Receptor (incluido `DomicilioFiscalReceptor` y `RegimenFiscalReceptor`), Conceptos con `ObjetoImp`, impuestos trasladados y retenidos por concepto y agrupados en el comprobante, `InformacionGlobal` y `CfdiRelacionados`. (`packages/mx/src/cfdi40.ts`)
 - Validaciones previas al timbrado de las reglas que más rechazos causan: RFC, régimen fiscal compatible con persona física o moral, uso de CFDI, código postal, PPD con forma de pago 99, PUE sin 99, reglas de PUBLICO EN GENERAL, `ObjetoImp` 02 con impuestos, tipo de cambio para moneda extranjera.
 - Redondeo a centavos por concepto (Importe y cada impuesto), que mantiene los totales dentro de la tolerancia del SAT para MXN.
-- Timbrado mediante la interfaz `PacProvider` (`apps/api/src/services/pac.ts`). La versión incluida es **un PAC de prueba**: devuelve un `TimbreFiscalDigital` ficticio y **no genera CFDI válidos**. Para producción hay que implementar el proveedor (Finkok, SW Sapien, Facturama, FacturAPI, etc.), cargar el CSD (.cer/.key) y generar el sello (cadena original con el XSLT del SAT), o usar un PAC que selle por ti.
-- Cancelación con motivo 01–04 y folio de sustitución para el motivo 01.
+- **Sello digital** con el CSD de la empresa (`packages/mx/src/csd.ts`): se valida que la llave abra con su contraseña, que corresponda al certificado, que sea CSD y no e.firma, que esté vigente y que su RFC sea el de la empresa. La cadena original se genera en el código con el mismo orden que `cadenaoriginal_4_0.xslt`. Las pruebas comparan el resultado con el XSLT oficial del SAT, validan el XML contra `cfdv40.xsd` y verifican el sello RSA-SHA256 con el CSD de pruebas EKU9003173C9.
+- El CSD se guarda en `company_csd` con la llave privada y su contraseña cifradas (AES-256-GCM, `ERP_SECRET_KEY`).
+- Timbrado mediante la interfaz `PacProvider` (`apps/api/src/services/pac.ts`):
+  - `sw`: SW Sapien. Envía el CFDI sellado a `/cfdi33/stamp/v4` y cancela con `/cfdi33/cancel/csd`. Probado contra un servidor simulado con las respuestas documentadas por SW; falta probarlo contra el ambiente de pruebas real de SW con una cuenta.
+  - `sandbox`: devuelve un `TimbreFiscalDigital` ficticio y **no genera CFDI válidos**. Las facturas timbradas así se cancelan sólo en el ERP.
+- Al timbrar con un PAC real la fecha del CFDI es la actual en `ERP_TIMEZONE`; el SAT rechaza fechas con más de 72 horas.
+- El inventario sale antes de llamar al PAC, así que una falta de existencias nunca deja un CFDI timbrado sin su factura. Si el PAC rechaza el CFDI, toda la operación se revierte y el error del PAC se muestra al usuario.
+- Cancelación con motivo 01–04 y folio de sustitución para el motivo 01. El acuse del PAC se guarda en la factura. Si el SAT requiere que el receptor acepte la cancelación, la factura sigue timbrada y hay que reintentar después.
 
 Pendiente: complemento de pagos 2.0 para facturas PPD, notas de crédito (tipo E), CFDI de traslado, carta porte, nómina, descarga masiva y validación de CFDI recibidos, PDF de la representación impresa.
 
