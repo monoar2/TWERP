@@ -20,7 +20,11 @@ declare module "fastify" {
 export async function buildServer(ctx: AppContext, opts: { logger?: boolean } = {}): Promise<FastifyInstance> {
   const app = Fastify({ logger: opts.logger ?? false });
   // Expose content-disposition so browsers can read download file names.
-  await app.register(cors, { origin: true, exposedHeaders: ["content-disposition"] });
+  await app.register(cors, {
+    origin: true,
+    methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"],
+    exposedHeaders: ["content-disposition"],
+  });
 
   app.get("/health", async () => ({ ok: true }));
 

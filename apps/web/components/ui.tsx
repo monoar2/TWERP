@@ -93,7 +93,7 @@ export function ErrorBox({ error }: { error: unknown }) {
       details = <pre className="mono small">{JSON.stringify(error.details, null, 2)}</pre>;
     }
   } else if (error instanceof TypeError) {
-    message = `No se pudo conectar con la API (${error.message}). Revisa la URL en Configuración.`;
+    message = `No se pudo conectar con la API (${error.message}). Revisa la dirección del servidor (en «Servidor», al iniciar sesión).`;
   } else if (error instanceof Error) {
     message = error.message;
   } else {

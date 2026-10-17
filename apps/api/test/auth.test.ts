@@ -20,6 +20,15 @@ describe("login", () => {
     expect((await env.app.inject({ method: "GET", url: "/products", headers: { authorization: "Bearer inventado" } })).statusCode).toBe(401);
   });
 
+  it("lets browsers on other origins send PUT and PATCH", async () => {
+    const res = await env.app.inject({
+      method: "OPTIONS", url: "/users/1",
+      headers: { origin: "http://localhost:3000", "access-control-request-method": "PATCH", "access-control-request-headers": "authorization,content-type" },
+    });
+    expect(res.headers["access-control-allow-methods"]).toContain("PATCH");
+    expect(res.headers["access-control-allow-methods"]).toContain("PUT");
+  });
+
   it("signs in with email and password and signs out", async () => {
     const res = await login("VENTAS@test.mx", "ventas-1234");
     expect(res.statusCode).toBe(200);
