@@ -1,0 +1,20 @@
+{
+  "name": "@erp/mx",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Mexican fiscal domain logic: RFC, IVA/ISR/IEPS, SAT catalogs, CFDI 4.0 and electronic accounting (Anexo 24) XML",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "decimal.js": "^10.6.0"
+  }
+}
