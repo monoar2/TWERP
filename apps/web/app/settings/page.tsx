@@ -1,22 +1,25 @@
 "use client";
 import { useEffect, useState, type FormEvent } from "react";
-import { api, DEFAULT_API_TOKEN, DEFAULT_API_URL, loadSettings, satCatalogs, saveSettings } from "@/lib/api";
-import { Card, ErrorBox, Field, Notice, PageHeader, useAction, useData } from "@/components/ui";
+import { canAccess } from "@erp/client";
+import { api, loadSettings, satCatalogs } from "@/lib/api";
+import { date, dateTime } from "@/lib/format";
+import { useProfile } from "@/components/Shell";
+import { Card, ErrorBox, Field, Loading, Notice, PageHeader, useAction, useData } from "@/components/ui";
 
 type CompanyForm = { rfc: string; razonSocial: string; regimenFiscal: string; codigoPostal: string; invoiceSerie: string; allowNegativeStock: boolean };
 
 export default function SettingsPage() {
-  const [conn, setConn] = useState({ apiUrl: "", token: "" });
-  const [connNotice, setConnNotice] = useState("");
-  const connAction = useAction();
-  const [reloadKey, setReloadKey] = useState(0);
+  const profile = useProfile();
+  const readCompany = canAccess(profile, "company");
+  const writeCompany = canAccess(profile, "company", true);
+  const readInventory = canAccess(profile, "inventory");
+  const readBanks = canAccess(profile, "banks");
+  const skip = Promise.resolve(undefined);
 
-  useEffect(() => { setConn(loadSettings()); }, []);
-
-  const company = useData(() => api().company(), [reloadKey]);
-  const cats = useData(() => satCatalogs(), [reloadKey]);
-  const warehouses = useData(() => api().warehouses(), [reloadKey]);
-  const banks = useData(() => api().bankAccounts(), [reloadKey]);
+  const company = useData(() => (readCompany ? api().company() : skip), [readCompany]);
+  const cats = useData(() => (readCompany ? satCatalogs() : skip), [readCompany]);
+  const warehouses = useData(() => (readInventory ? api().warehouses() : skip), [readInventory]);
+  const banks = useData(() => (readBanks ? api().bankAccounts() : skip), [readBanks]);
   const [form, setForm] = useState<CompanyForm>({ rfc: "", razonSocial: "", regimenFiscal: "601", codigoPostal: "", invoiceSerie: "A", allowNegativeStock: false });
   const [companyNotice, setCompanyNotice] = useState("");
   const companyAction = useAction();
@@ -33,20 +36,6 @@ export default function SettingsPage() {
     });
   }, [company.data]);
 
-  async function saveConn(e: FormEvent) {
-    e.preventDefault();
-    saveSettings({ apiUrl: conn.apiUrl.trim(), token: conn.token.trim() });
-    setConnNotice("");
-    const ok = await connAction.run(async () => { await api().satCatalogs(); return true; });
-    if (ok) setConnNotice("Conexión guardada y verificada.");
-    setReloadKey((k) => k + 1);
-  }
-  function resetConn() {
-    saveSettings({});
-    setConn({ apiUrl: DEFAULT_API_URL, token: DEFAULT_API_TOKEN });
-    setConnNotice("Se restauraron los valores predeterminados.");
-    setReloadKey((k) => k + 1);
-  }
   async function saveCompany(e: FormEvent) {
     e.preventDefault();
     const body: Parameters<ReturnType<typeof api>["saveCompany"]>[0] & { allowNegativeStock: boolean } = { ...form, rfc: form.rfc.trim().toUpperCase() };
@@ -70,22 +59,10 @@ export default function SettingsPage() {
   return (
     <>
       <PageHeader title="Configuración" />
-      <Card title="Conexión con la API">
-        <form onSubmit={saveConn}>
-          <div className="form-grid">
-            <Field label="URL de la API" hint={`Predeterminada: ${DEFAULT_API_URL}`}><input required value={conn.apiUrl} onChange={(e) => setConn({ ...conn, apiUrl: e.target.value })} className="mono" /></Field>
-            <Field label="Token (Bearer)" hint="Opcional; se guarda solo en este navegador"><input type="password" value={conn.token} onChange={(e) => setConn({ ...conn, token: e.target.value })} autoComplete="off" /></Field>
-          </div>
-          <Notice>{connNotice}</Notice>
-          <ErrorBox error={connAction.error} />
-          <div className="form-actions">
-            <button type="button" className="btn" onClick={resetConn}>Restaurar</button>
-            <button className="btn btn-primary" disabled={connAction.busy}>Guardar y probar</button>
-          </div>
-        </form>
-      </Card>
-      <Card title="Datos fiscales de la empresa (emisor)">
+      <AccountCard />
+      {readCompany ? <Card title="Datos fiscales de la empresa (emisor)">
         <form onSubmit={saveCompany}>
+          <fieldset className="plain" disabled={!writeCompany}>
           <div className="form-grid">
             <Field label="RFC"><input required maxLength={13} className="mono" value={form.rfc} onChange={(e) => setForm({ ...form, rfc: e.target.value.toUpperCase() })} /></Field>
             <Field label="Razón social" hint="Tal como aparece en la Constancia de Situación Fiscal, sin régimen societario"><input required value={form.razonSocial} onChange={(e) => setForm({ ...form, razonSocial: e.target.value })} /></Field>
@@ -100,15 +77,19 @@ export default function SettingsPage() {
               <label className="checkbox"><input type="checkbox" checked={form.allowNegativeStock} onChange={(e) => setForm({ ...form, allowNegativeStock: e.target.checked })} /> Permitir existencias negativas</label>
             </Field>
           </div>
+          </fieldset>
           <Notice>{companyNotice}</Notice>
           <ErrorBox error={companyAction.error ?? company.error} />
-          <div className="form-actions"><button className="btn btn-primary" disabled={companyAction.busy}>Guardar datos fiscales</button></div>
+          {writeCompany
+            ? <div className="form-actions"><button className="btn btn-primary" disabled={companyAction.busy}>Guardar datos fiscales</button></div>
+            : <p className="muted small">Solo el administrador puede modificar los datos fiscales.</p>}
         </form>
-      </Card>
+      </Card> : null}
+      {readCompany ? <CsdCard canUpload={writeCompany} /> : null}
       <Notice>{miscNotice}</Notice>
       <ErrorBox error={miscAction.error} />
       <div className="grid grid-2">
-        <Card title="Almacenes">
+        {readInventory ? <Card title="Almacenes">
           <ErrorBox error={warehouses.error} />
           <div className="table-wrap" style={{ marginBottom: 12 }}>
             <table>
@@ -116,14 +97,14 @@ export default function SettingsPage() {
               <tbody>{(warehouses.data ?? []).map((w) => <tr key={w.id}><td className="mono">{w.code}</td><td>{w.name}</td><td className="small">{w.address}</td></tr>)}</tbody>
             </table>
           </div>
-          <form onSubmit={addWarehouse} className="form-grid">
+          {canAccess(profile, "inventory", true) ? <form onSubmit={addWarehouse} className="form-grid">
             <Field label="Código"><input required value={wh.code} onChange={(e) => setWh({ ...wh, code: e.target.value.toUpperCase() })} /></Field>
             <Field label="Nombre"><input required value={wh.name} onChange={(e) => setWh({ ...wh, name: e.target.value })} /></Field>
             <Field label="Dirección" wide><input value={wh.address} onChange={(e) => setWh({ ...wh, address: e.target.value })} /></Field>
             <div className="field-wide form-actions" style={{ marginTop: 0 }}><button className="btn" disabled={miscAction.busy}>Agregar almacén</button></div>
-          </form>
-        </Card>
-        <Card title="Cuentas bancarias">
+          </form> : null}
+        </Card> : null}
+        {readBanks ? <Card title="Cuentas bancarias">
           <ErrorBox error={banks.error} />
           <div className="table-wrap" style={{ marginBottom: 12 }}>
             <table>
@@ -131,15 +112,125 @@ export default function SettingsPage() {
               <tbody>{(banks.data ?? []).map((b) => <tr key={b.id}><td>{b.name}</td><td>{b.bank}</td><td className="mono small">{b.clabe}</td><td className="mono">{b.account_code}</td></tr>)}</tbody>
             </table>
           </div>
-          <form onSubmit={addBank} className="form-grid">
+          {canAccess(profile, "banks", true) ? <form onSubmit={addBank} className="form-grid">
             <Field label="Nombre"><input required value={bank.name} onChange={(e) => setBank({ ...bank, name: e.target.value })} /></Field>
             <Field label="Banco"><input value={bank.bank} onChange={(e) => setBank({ ...bank, bank: e.target.value })} /></Field>
             <Field label="CLABE"><input pattern="\d{18}" maxLength={18} className="mono" value={bank.clabe} onChange={(e) => setBank({ ...bank, clabe: e.target.value })} /></Field>
             <Field label="Cuenta contable" hint="Cuenta de detalle; vacío = 102.01"><input className="mono" value={bank.accountCode} onChange={(e) => setBank({ ...bank, accountCode: e.target.value })} /></Field>
             <div className="field-wide form-actions" style={{ marginTop: 0 }}><button className="btn" disabled={miscAction.busy}>Agregar cuenta</button></div>
-          </form>
-        </Card>
+          </form> : null}
+        </Card> : null}
       </div>
     </>
+  );
+}
+
+const MIN_PASSWORD = 10;
+
+/** The signed-in user, the server in use and a form to change one's own password. */
+function AccountCard() {
+  const profile = useProfile();
+  const [apiUrl, setApiUrl] = useState("");
+  const [pw, setPw] = useState({ current: "", next: "", confirm: "" });
+  const [notice, setNotice] = useState("");
+  const action = useAction();
+  useEffect(() => { setApiUrl(loadSettings().apiUrl); }, []);
+
+  async function changePassword(e: FormEvent) {
+    e.preventDefault();
+    setNotice("");
+    if (pw.next.length < MIN_PASSWORD) { action.setError(new Error(`La nueva contraseña debe tener al menos ${MIN_PASSWORD} caracteres.`)); return; }
+    if (pw.next !== pw.confirm) { action.setError(new Error("La confirmación no coincide con la nueva contraseña.")); return; }
+    const ok = await action.run(() => api().changePassword(pw.current, pw.next));
+    if (ok) { setNotice("Contraseña actualizada."); setPw({ current: "", next: "", confirm: "" }); }
+  }
+
+  return (
+    <div className="grid grid-2">
+      <Card title="Mi cuenta">
+        <dl className="dl">
+          <dt>Nombre</dt><dd>{profile?.user.name}</dd>
+          <dt>Correo</dt><dd>{profile?.user.email}</dd>
+          <dt>Rol</dt><dd>{profile?.roleLabel}</dd>
+          <dt>Servidor</dt><dd className="mono small">{apiUrl}</dd>
+        </dl>
+        <p className="muted small">Para cambiar de servidor, cierra sesión y ábrelo en «Servidor» en la pantalla de inicio de sesión.</p>
+      </Card>
+      <Card title="Mi contraseña">
+        <form onSubmit={changePassword}>
+          <div className="form-grid">
+            <Field label="Contraseña actual" wide><input type="password" required autoComplete="current-password" value={pw.current} onChange={(e) => setPw({ ...pw, current: e.target.value })} /></Field>
+            <Field label="Nueva contraseña" hint={`Mínimo ${MIN_PASSWORD} caracteres`}><input type="password" required minLength={MIN_PASSWORD} autoComplete="new-password" value={pw.next} onChange={(e) => setPw({ ...pw, next: e.target.value })} /></Field>
+            <Field label="Confirmar nueva contraseña"><input type="password" required autoComplete="new-password" value={pw.confirm} onChange={(e) => setPw({ ...pw, confirm: e.target.value })} /></Field>
+          </div>
+          <Notice>{notice}</Notice>
+          <ErrorBox error={action.error} />
+          <div className="form-actions"><button className="btn btn-primary" disabled={action.busy}>Cambiar contraseña</button></div>
+        </form>
+      </Card>
+    </div>
+  );
+}
+
+/** Reads a file as base64 (without the data: prefix). */
+async function fileToBase64(file: File): Promise<string> {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let bin = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(bin);
+}
+
+/** The company's Certificado de Sello Digital, needed to stamp real CFDI. */
+function CsdCard({ canUpload }: { canUpload: boolean }) {
+  const csd = useData(() => api().csd());
+  const [cer, setCer] = useState<File | null>(null);
+  const [key, setKey] = useState<File | null>(null);
+  const [password, setPassword] = useState("");
+  const [formKey, setFormKey] = useState(0);
+  const [notice, setNotice] = useState("");
+  const action = useAction();
+
+  async function upload(e: FormEvent) {
+    e.preventDefault();
+    setNotice("");
+    if (!cer || !key) { action.setError(new Error("Selecciona el archivo .cer y el archivo .key.")); return; }
+    const ok = await action.run(async () => api().uploadCsd({ cer: await fileToBase64(cer), key: await fileToBase64(key), password }));
+    if (ok) {
+      setNotice(`CSD ${ok.noCertificado} cargado.`);
+      csd.setData(ok);
+      setCer(null); setKey(null); setPassword(""); setFormKey((k) => k + 1);
+    }
+  }
+
+  const info = csd.data;
+  const expired = info ? new Date(info.validTo).getTime() < Date.now() : false;
+  return (
+    <Card title="Certificado de sello digital (CSD)">
+      <p className="muted small" style={{ marginTop: 0 }}>
+        El CSD (archivos .cer y .key que emite el SAT, con su contraseña) es necesario para timbrar facturas reales.
+        La llave privada y su contraseña se guardan cifradas en el servidor.
+      </p>
+      <ErrorBox error={csd.error} />
+      {csd.loading && info === undefined ? <Loading /> : info ? (
+        <dl className="dl">
+          <dt>RFC</dt><dd className="mono">{info.rfc}</dd>
+          <dt>No. de certificado</dt><dd className="mono">{info.noCertificado}</dd>
+          <dt>Vigencia</dt><dd>{date(info.validFrom)} – {date(info.validTo)} {expired ? <span className="chip chip-danger">Vencido</span> : <span className="chip chip-success">Vigente</span>}</dd>
+          <dt>Cargado</dt><dd>{dateTime(info.uploadedAt)}</dd>
+        </dl>
+      ) : !csd.error ? <p><span className="chip chip-warning">Sin CSD</span></p> : null}
+      {canUpload ? (
+        <form onSubmit={upload} key={formKey} style={{ marginTop: 12 }}>
+          <div className="form-grid">
+            <Field label="Certificado (.cer)"><input type="file" accept=".cer" required onChange={(e) => setCer(e.target.files?.[0] ?? null)} /></Field>
+            <Field label="Llave privada (.key)"><input type="file" accept=".key" required onChange={(e) => setKey(e.target.files?.[0] ?? null)} /></Field>
+            <Field label="Contraseña de la llave"><input type="password" required autoComplete="off" value={password} onChange={(e) => setPassword(e.target.value)} /></Field>
+          </div>
+          <Notice>{notice}</Notice>
+          <ErrorBox error={action.error} />
+          <div className="form-actions"><button className="btn btn-primary" disabled={action.busy}>{info ? "Reemplazar CSD" : "Cargar CSD"}</button></div>
+        </form>
+      ) : <p className="muted small">Solo el administrador puede cargar el CSD.</p>}
+    </Card>
   );
 }

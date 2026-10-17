@@ -38,7 +38,8 @@ const supplierLine = z.object({
 const paymentSchema = z.object({ bankAccountId: id, amount: num, paidOn: date.optional(), formaPago: z.string().optional(), reference: z.string().optional() });
 
 /** Customer invoices (CFDI), supplier invoices and payments. */
-export async function documentRoutes(app: FastifyInstance, { sql, pac }: AppContext) {
+export async function documentRoutes(app: FastifyInstance, ctx: AppContext) {
+  const { sql } = ctx;
   app.get("/sales-invoices", async (req) => {
     const q = parse(z.object({ status: z.string().optional(), customerId: id.optional(), limit: z.coerce.number().int().max(500).default(100) }), req.query);
     return sql`
@@ -75,12 +76,12 @@ export async function documentRoutes(app: FastifyInstance, { sql, pac }: AppCont
   });
   app.post("/sales-invoices/:id/issue", async (req) => {
     const { id: invId } = parse(idParam, req.params);
-    return sql.begin((tx) => issueSalesInvoice(tx, invId, pac));
+    return sql.begin((tx) => issueSalesInvoice(tx, invId, ctx));
   });
   app.post("/sales-invoices/:id/cancel", async (req) => {
     const { id: invId } = parse(idParam, req.params);
     const b = parse(z.object({ motivo: z.enum(["01", "02", "03", "04"]).default("02"), folioSustitucion: z.string().optional() }), req.body ?? {});
-    return sql.begin((tx) => cancelSalesInvoice(tx, invId, pac, b.motivo, b.folioSustitucion));
+    return sql.begin((tx) => cancelSalesInvoice(tx, invId, ctx, b.motivo, b.folioSustitucion));
   });
   app.post("/sales-invoices/:id/payments", async (req, reply) => {
     const { id: invId } = parse(idParam, req.params);

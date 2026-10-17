@@ -1,26 +1,51 @@
 import cors from "@fastify/cors";
 import Fastify, { type FastifyInstance } from "fastify";
 import type { AppContext } from "./context.js";
+import { can } from "./auth/permissions.js";
+import { userForToken, type SessionUser } from "./auth/sessions.js";
 import { AppError } from "./errors.js";
 import { accountingRoutes } from "./routes/accounting.js";
 import { aiRoutes } from "./routes/ai.js";
+import { authRoutes } from "./routes/auth.js";
 import { catalogRoutes } from "./routes/catalog.js";
 import { documentRoutes } from "./routes/documents.js";
 import { inventoryRoutes } from "./routes/inventory.js";
 
+declare module "fastify" {
+  interface FastifyRequest {
+    user?: SessionUser;
+  }
+}
+
 export async function buildServer(ctx: AppContext, opts: { logger?: boolean } = {}): Promise<FastifyInstance> {
   const app = Fastify({ logger: opts.logger ?? false });
   // Expose content-disposition so browsers can read download file names.
-  await app.register(cors, { origin: true, exposedHeaders: ["content-disposition"] });
+  await app.register(cors, {
+    origin: true,
+    methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"],
+    exposedHeaders: ["content-disposition"],
+  });
 
   app.get("/health", async () => ({ ok: true }));
 
-  // Single shared bearer token for v1; per-user auth and roles come next.
+  // Every route needs a signed-in user whose role allows it, except health and login.
+  app.decorateRequest("user", undefined);
   app.addHook("onRequest", async (req, reply) => {
-    if (!ctx.apiToken || req.method === "OPTIONS" || req.url === "/health") return;
-    if (req.headers.authorization !== `Bearer ${ctx.apiToken}`) {
-      return reply.code(401).send({ error: "No autorizado" });
-    }
+    const path = req.url.split("?")[0]!;
+    if (req.method === "OPTIONS" || path === "/health" || path === "/auth/login") return;
+    const token = /^Bearer (.+)$/i.exec(req.headers.authorization ?? "")?.[1];
+    req.user = token ? await userForToken(ctx.sql, token) : undefined;
+    if (!req.user) return reply.code(401).send({ error: "Inicia sesión para continuar" });
+    if (!path.startsWith("/auth/") && !can(req.user.role, req.method, path))
+      return reply.code(403).send({ error: "Tu rol no tiene permiso para esta acción" });
+  });
+
+  // Audit trail of every write, successful or not.
+  app.addHook("onResponse", async (req, reply) => {
+    if (["GET", "HEAD", "OPTIONS"].includes(req.method) || !req.user) return;
+    await ctx.sql`INSERT INTO audit_log (user_id, method, path, status, ip)
+                  VALUES (${req.user.id}, ${req.method}, ${req.url.slice(0, 500)}, ${reply.statusCode}, ${req.ip})`
+      .catch((err) => app.log.error(err, "audit log write failed"));
   });
 
   app.setErrorHandler((err, _req, reply) => {
@@ -35,6 +60,7 @@ export async function buildServer(ctx: AppContext, opts: { logger?: boolean } = 
     return reply.code(500).send({ error: "Error interno" });
   });
 
+  await authRoutes(app, ctx);
   await catalogRoutes(app, ctx);
   await inventoryRoutes(app, ctx);
   await documentRoutes(app, ctx);

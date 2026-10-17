@@ -127,130 +127,179 @@ export function validateCfdi(input: CfdiInput): CfdiValidationIssue[] {
   return issues;
 }
 
-function taxAttrs(t: { impuesto: string; tipoFactor: string; rate?: string; base: { toString(): string }; importe?: { toString(): string } }) {
-  return attrs([
+type Attr = [string, string | number | undefined | null];
+
+/** An XML element of the CFDI, kept as a tree so the XML and the cadena original come from the same data. */
+interface XNode {
+  name: string;
+  attrs: Attr[];
+  children: XNode[];
+}
+
+const el = (name: string, attrs: Attr[] = [], children: XNode[] = []): XNode => ({ name, attrs, children });
+const present = (v: Attr[1]): v is string | number => v !== undefined && v !== null && v !== "";
+
+function taxAttrs(t: { impuesto: string; tipoFactor: string; rate?: string; base: { toString(): string }; importe?: { toString(): string } }): Attr[] {
+  return [
     ["Base", fmt2(t.base.toString())],
     ["Impuesto", t.impuesto],
     ["TipoFactor", t.tipoFactor],
     ["TasaOCuota", t.tipoFactor === "Exento" ? undefined : fmt6(t.rate ?? 0)],
     ["Importe", t.importe === undefined ? undefined : fmt2(t.importe.toString())],
-  ]);
+  ];
+}
+
+function serialize(node: XNode, out: string[]): void {
+  const open = `<cfdi:${node.name}${attrs(node.attrs)}`;
+  if (!node.children.length) {
+    out.push(`${open}/>`);
+    return;
+  }
+  out.push(`${open}>`);
+  for (const c of node.children) serialize(c, out);
+  out.push(`</cfdi:${node.name}>`);
+}
+
+/** Attributes the SAT XSLT leaves out of the cadena original. */
+const NOT_IN_CADENA = new Set(["Sello", "Certificado", "xmlns:cfdi", "xmlns:xsi", "xsi:schemaLocation"]);
+
+function cadenaValues(node: XNode, out: string[], parent?: string): void {
+  const push = (pairs: Attr[]) => {
+    for (const [k, v] of pairs) if (!NOT_IN_CADENA.has(k) && present(v)) out.push(String(v).replace(/\s+/g, " ").trim());
+  };
+  if (node.name === "Impuestos" && parent === "Comprobante") {
+    // cadenaoriginal_4_0.xslt emits each total right after its own group.
+    const get = (n: string) => node.attrs.filter(([k]) => k === n);
+    const group = (n: string) => node.children.find((c) => c.name === n);
+    const ret = group("Retenciones");
+    if (ret) cadenaValues(ret, out, node.name);
+    push(get("TotalImpuestosRetenidos"));
+    const tras = group("Traslados");
+    if (tras) cadenaValues(tras, out, node.name);
+    push(get("TotalImpuestosTrasladados"));
+    return;
+  }
+  push(node.attrs);
+  for (const c of node.children) cadenaValues(c, out, node.name);
+}
+
+/**
+ * Cadena original of a CFDI 4.0 (Anexo 20), equivalent to applying SAT's
+ * cadenaoriginal_4_0.xslt to the XML this module builds.
+ */
+function cadenaOriginalOf(root: XNode): string {
+  const values: string[] = [];
+  cadenaValues(root, values);
+  return `||${values.join("|")}||`;
+}
+
+/**
+ * Seals a CFDI with the issuer's CSD. `sign` returns the base64 RSA-SHA256
+ * signature of the cadena original made with the CSD private key.
+ */
+export interface CfdiSigner {
+  /** 20-digit certificate number (the CSD serial in ASCII). */
+  noCertificado: string;
+  /** Base64 of the CSD certificate (DER). */
+  certificado: string;
+  sign(cadenaOriginal: string): string;
 }
 
 export interface BuiltCfdi {
   xml: string;
   totals: DocumentTotals;
+  cadenaOriginal: string;
 }
 
 /**
- * Build the unsigned CFDI 4.0 XML. Sello, NoCertificado and Certificado are
- * added by the signing step (CSD) and the TimbreFiscalDigital by the PAC.
+ * Build the CFDI 4.0 XML. With a signer it carries Sello, NoCertificado and
+ * Certificado and is ready for a PAC; the TimbreFiscalDigital is added by the
+ * PAC when stamping.
  */
-export function buildCfdiXml(input: CfdiInput): BuiltCfdi {
+export function buildCfdiXml(input: CfdiInput, signer?: CfdiSigner): BuiltCfdi {
   const totals = computeDocument(input.conceptos);
   const moneda = input.moneda ?? "MXN";
-  const out: string[] = [];
-  out.push('<?xml version="1.0" encoding="UTF-8"?>');
-  out.push(
-    `<cfdi:Comprobante xmlns:cfdi="${CFDI_NAMESPACE}" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"` +
-      ` xsi:schemaLocation="${CFDI_SCHEMA_LOCATION}"` +
-      attrs([
-        ["Version", "4.0"],
-        ["Serie", input.serie],
-        ["Folio", input.folio],
-        ["Fecha", input.fecha],
-        ["FormaPago", input.formaPago],
-        ["SubTotal", fmt2(totals.subtotal)],
-        ["Descuento", totals.discount.isZero() ? undefined : fmt2(totals.discount)],
-        ["Moneda", moneda],
-        ["TipoCambio", moneda === "MXN" ? undefined : input.tipoCambio],
-        ["Total", fmt2(totals.total)],
-        ["TipoDeComprobante", input.tipoDeComprobante],
-        ["Exportacion", input.exportacion ?? "01"],
-        ["MetodoPago", input.metodoPago],
-        ["LugarExpedicion", input.lugarExpedicion],
-      ]) +
-      ">",
-  );
+  const children: XNode[] = [];
   if (input.informacionGlobal) {
     const g = input.informacionGlobal;
-    out.push(`<cfdi:InformacionGlobal${attrs([["Periodicidad", g.periodicidad], ["Meses", g.meses], ["Año", g.anio]])}/>`);
+    children.push(el("InformacionGlobal", [["Periodicidad", g.periodicidad], ["Meses", g.meses], ["Año", g.anio]]));
   }
   if (input.relacionados?.uuids.length) {
-    out.push(`<cfdi:CfdiRelacionados${attrs([["TipoRelacion", input.relacionados.tipoRelacion]])}>`);
-    for (const uuid of input.relacionados.uuids) out.push(`<cfdi:CfdiRelacionado${attrs([["UUID", uuid]])}/>`);
-    out.push("</cfdi:CfdiRelacionados>");
+    children.push(el("CfdiRelacionados", [["TipoRelacion", input.relacionados.tipoRelacion]],
+      input.relacionados.uuids.map((uuid) => el("CfdiRelacionado", [["UUID", uuid]]))));
   }
-  out.push(
-    `<cfdi:Emisor${attrs([["Rfc", input.emisor.rfc.toUpperCase()], ["Nombre", input.emisor.nombre], ["RegimenFiscal", input.emisor.regimenFiscal]])}/>`,
-  );
+  children.push(el("Emisor", [["Rfc", input.emisor.rfc.toUpperCase()], ["Nombre", input.emisor.nombre], ["RegimenFiscal", input.emisor.regimenFiscal]]));
   const r = input.receptor;
-  out.push(
-    `<cfdi:Receptor${attrs([
-      ["Rfc", r.rfc.toUpperCase()],
-      ["Nombre", r.nombre],
-      ["DomicilioFiscalReceptor", r.domicilioFiscal],
-      ["RegimenFiscalReceptor", r.regimenFiscal],
-      ["UsoCFDI", r.usoCfdi],
-    ])}/>`,
-  );
-  out.push("<cfdi:Conceptos>");
-  input.conceptos.forEach((c, i) => {
+  children.push(el("Receptor", [
+    ["Rfc", r.rfc.toUpperCase()],
+    ["Nombre", r.nombre],
+    ["DomicilioFiscalReceptor", r.domicilioFiscal],
+    ["RegimenFiscalReceptor", r.regimenFiscal],
+    ["UsoCFDI", r.usoCfdi],
+  ]));
+  children.push(el("Conceptos", [], input.conceptos.map((c, i) => {
     const t = totals.lines[i]!;
-    out.push(
-      `<cfdi:Concepto${attrs([
-        ["ClaveProdServ", c.claveProdServ],
-        ["NoIdentificacion", c.noIdentificacion],
-        ["Cantidad", fmt6(c.quantity)],
-        ["ClaveUnidad", c.claveUnidad],
-        ["Unidad", c.unidad],
-        ["Descripcion", c.descripcion],
-        ["ValorUnitario", fmt6(c.unitPrice)],
-        ["Importe", fmt2(t.importe)],
-        ["Descuento", t.discount.isZero() ? undefined : fmt2(t.discount)],
-        ["ObjetoImp", c.objetoImp],
-      ])}>`,
-    );
-    if (t.traslados.length || t.retenciones.length) {
-      out.push("<cfdi:Impuestos>");
-      if (t.traslados.length) {
-        out.push("<cfdi:Traslados>");
-        for (const tr of t.traslados) out.push(`<cfdi:Traslado${taxAttrs(tr)}/>`);
-        out.push("</cfdi:Traslados>");
-      }
-      if (t.retenciones.length) {
-        out.push("<cfdi:Retenciones>");
-        for (const rt of t.retenciones) out.push(`<cfdi:Retencion${taxAttrs(rt)}/>`);
-        out.push("</cfdi:Retenciones>");
-      }
-      out.push("</cfdi:Impuestos>");
-    }
-    out.push("</cfdi:Concepto>");
-  });
-  out.push("</cfdi:Conceptos>");
+    const groups: XNode[] = [];
+    if (t.traslados.length) groups.push(el("Traslados", [], t.traslados.map((tr) => el("Traslado", taxAttrs(tr)))));
+    if (t.retenciones.length) groups.push(el("Retenciones", [], t.retenciones.map((rt) => el("Retencion", taxAttrs(rt)))));
+    return el("Concepto", [
+      ["ClaveProdServ", c.claveProdServ],
+      ["NoIdentificacion", c.noIdentificacion],
+      ["Cantidad", fmt6(c.quantity)],
+      ["ClaveUnidad", c.claveUnidad],
+      ["Unidad", c.unidad],
+      ["Descripcion", c.descripcion],
+      ["ValorUnitario", fmt6(c.unitPrice)],
+      ["Importe", fmt2(t.importe)],
+      ["Descuento", t.discount.isZero() ? undefined : fmt2(t.discount)],
+      ["ObjetoImp", c.objetoImp],
+    ], groups.length ? [el("Impuestos", [], groups)] : []);
+  })));
 
   if (totals.traslados.length || totals.retenciones.length) {
     const hasTasaTraslado = totals.traslados.some((t) => t.tipoFactor !== "Exento");
-    out.push(
-      `<cfdi:Impuestos${attrs([
-        ["TotalImpuestosRetenidos", totals.retenciones.length ? fmt2(totals.totalRetenciones) : undefined],
-        ["TotalImpuestosTrasladados", hasTasaTraslado ? fmt2(totals.totalTraslados) : undefined],
-      ])}>`,
-    );
-    if (totals.retenciones.length) {
-      out.push("<cfdi:Retenciones>");
-      for (const rt of totals.retenciones) out.push(`<cfdi:Retencion${attrs([["Impuesto", rt.impuesto], ["Importe", fmt2(rt.importe)]])}/>`);
-      out.push("</cfdi:Retenciones>");
-    }
-    if (totals.traslados.length) {
-      out.push("<cfdi:Traslados>");
-      for (const tr of totals.traslados) out.push(`<cfdi:Traslado${taxAttrs(tr)}/>`);
-      out.push("</cfdi:Traslados>");
-    }
-    out.push("</cfdi:Impuestos>");
+    const groups: XNode[] = [];
+    if (totals.retenciones.length)
+      groups.push(el("Retenciones", [], totals.retenciones.map((rt) => el("Retencion", [["Impuesto", rt.impuesto], ["Importe", fmt2(rt.importe)]]))));
+    if (totals.traslados.length) groups.push(el("Traslados", [], totals.traslados.map((tr) => el("Traslado", taxAttrs(tr)))));
+    children.push(el("Impuestos", [
+      ["TotalImpuestosRetenidos", totals.retenciones.length ? fmt2(totals.totalRetenciones) : undefined],
+      ["TotalImpuestosTrasladados", hasTasaTraslado ? fmt2(totals.totalTraslados) : undefined],
+    ], groups));
   }
-  out.push("</cfdi:Comprobante>");
-  return { xml: out.join("\n"), totals };
+
+  const rootAttrs: Attr[] = [
+    ["xmlns:cfdi", CFDI_NAMESPACE],
+    ["xmlns:xsi", "http://www.w3.org/2001/XMLSchema-instance"],
+    ["xsi:schemaLocation", CFDI_SCHEMA_LOCATION],
+    ["Version", "4.0"],
+    ["Serie", input.serie],
+    ["Folio", input.folio],
+    ["Fecha", input.fecha],
+    ["Sello", undefined],
+    ["FormaPago", input.formaPago],
+    ["NoCertificado", signer?.noCertificado],
+    ["Certificado", undefined],
+    ["SubTotal", fmt2(totals.subtotal)],
+    ["Descuento", totals.discount.isZero() ? undefined : fmt2(totals.discount)],
+    ["Moneda", moneda],
+    ["TipoCambio", moneda === "MXN" ? undefined : input.tipoCambio],
+    ["Total", fmt2(totals.total)],
+    ["TipoDeComprobante", input.tipoDeComprobante],
+    ["Exportacion", input.exportacion ?? "01"],
+    ["MetodoPago", input.metodoPago],
+    ["LugarExpedicion", input.lugarExpedicion],
+  ];
+  const root = el("Comprobante", rootAttrs, children);
+  const cadenaOriginal = cadenaOriginalOf(root);
+  if (signer) {
+    const set = (k: string, v: string) => { rootAttrs.find(([name]) => name === k)![1] = v; };
+    set("Sello", signer.sign(cadenaOriginal));
+    set("Certificado", signer.certificado);
+  }
+  const out = ['<?xml version="1.0" encoding="UTF-8"?>'];
+  serialize(root, out);
+  return { xml: out.join("\n"), totals, cadenaOriginal };
 }
 
 /** Standard IVA 16% traslado, the default for most goods and services. */

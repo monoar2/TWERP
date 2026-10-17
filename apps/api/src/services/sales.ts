@@ -4,7 +4,19 @@ import { AppError, badRequest, conflict, notFound } from "../errors.js";
 import { accountFor, postEntry, reverseEntry, type EntryLineInput } from "./accounting.js";
 import { moveStock } from "./inventory.js";
 import { nextSequence } from "./sequences.js";
-import type { PacProvider } from "./pac.js";
+import { activeCsd } from "./csd.js";
+import { PacError, SandboxPac, type CancelResult, type PacProvider } from "./pac.js";
+
+/** What issuing and cancelling CFDIs needs besides the database. */
+export interface CfdiServices {
+  pac: PacProvider;
+  /** Decrypts the stored CSD. */
+  secretKey?: Buffer;
+  /** IANA zone of the LugarExpedicion, for the CFDI Fecha. */
+  timezone: string;
+}
+
+const pacFailed = (err: unknown) => (err instanceof PacError ? new AppError(502, err.message) : err);
 
 export interface SalesLineInput {
   productId?: number;
@@ -153,24 +165,36 @@ export async function buildSalesCfdi(tx: Db, id: number, folio?: number): Promis
 
 /**
  * Issue (timbrar) a draft invoice in one transaction: validate the CFDI rules,
- * assign the folio, stamp with the PAC, take products out of stock at average
- * cost and post the sales and cost-of-sales entries with the CFDI UUID.
+ * assign the folio, take products out of stock at average cost, seal with the
+ * CSD, stamp with the PAC and post the sales and cost-of-sales entries with
+ * the CFDI UUID. Stock goes out before stamping so a shortage never leaves a
+ * stamped CFDI without its invoice.
  */
-export async function issueSalesInvoice(tx: Db, id: number, pac: PacProvider) {
+export async function issueSalesInvoice(tx: Db, id: number, svc: CfdiServices) {
+  const { pac } = svc;
   const [inv] = await tx<{ id: number; status: string; serie: string; warehouse_id: number | null; third_party_id: number; issue_date: string; total: string; total_traslados: string; rfc: string }[]>`
     SELECT i.*, t.rfc FROM sales_invoices i JOIN third_parties t ON t.id = i.third_party_id WHERE i.id = ${id} FOR UPDATE OF i`;
   if (!inv) throw notFound("Factura");
   if (inv.status !== "draft") throw conflict("Sólo se pueden timbrar facturas en borrador");
+
+  const stored = await activeCsd(tx, svc.secretKey);
+  if (pac.requiresCsd && !stored) throw new AppError(422, "Sube el CSD de la empresa (archivos .cer y .key) antes de timbrar");
+  if (pac.requiresCsd) {
+    // SAT rejects a Fecha more than 72 hours before stamping or in the future, so a real CFDI is dated now.
+    const [dated] = await tx<{ issue_date: string }[]>`
+      UPDATE sales_invoices SET issue_date = date_trunc('second', timezone(${svc.timezone}, now()))
+      WHERE id = ${id} RETURNING issue_date`;
+    inv.issue_date = dated!.issue_date;
+  }
   await recalcSalesInvoice(tx, id);
 
   const draft = await buildSalesCfdi(tx, id, 0);
   const issues = validateCfdi(draft);
   if (issues.length) throw new AppError(422, "La factura no cumple las reglas del CFDI 4.0", issues);
+  if (stored && stored.csd.rfc !== draft.emisor.rfc.toUpperCase())
+    throw new AppError(422, `El CSD es del RFC ${stored.csd.rfc} y la empresa tiene el RFC ${draft.emisor.rfc}`);
 
   const folio = await nextSequence(tx, `invoice:${inv.serie}`);
-  const cfdi = await buildSalesCfdi(tx, id, folio);
-  const { xml } = buildCfdiXml(cfdi);
-  const stamped = await pac.stamp(xml);
   const date = inv.issue_date.slice(0, 10);
 
   // Stock out and cost of sales.
@@ -189,6 +213,9 @@ export async function issueSalesInvoice(tx: Db, id: number, pac: PacProvider) {
       cost = cost.plus(mov.value.abs());
     }
   }
+
+  const { xml } = buildCfdiXml(await buildSalesCfdi(tx, id, folio), stored?.csd.signer);
+  const stamped = await pac.stamp(xml).catch((err) => { throw pacFailed(err); });
 
   // Sales entry: receivable against income by IVA treatment, IVA not yet
   // collected (cash-basis IVA, LIVA art. 1-B) and withholdings by the customer.
@@ -238,9 +265,10 @@ export async function issueSalesInvoice(tx: Db, id: number, pac: PacProvider) {
  * every posted entry of the invoice. Invoices with payments must have them
  * reversed first (or use a credit note).
  */
-export async function cancelSalesInvoice(tx: Db, id: number, pac: PacProvider, motivo: string, folioSustitucion?: string) {
-  const [inv] = await tx<{ status: string; uuid: string | null; paid_amount: string; serie: string; folio: number; warehouse_id: number | null }[]>`
-    SELECT status, uuid, paid_amount, serie, folio, warehouse_id FROM sales_invoices WHERE id = ${id} FOR UPDATE`;
+export async function cancelSalesInvoice(tx: Db, id: number, svc: CfdiServices, motivo: string, folioSustitucion?: string) {
+  const [inv] = await tx<{ status: string; uuid: string | null; paid_amount: string; serie: string; folio: number; warehouse_id: number | null; total: string; rfc: string; pac: string | null }[]>`
+    SELECT i.status, i.uuid, i.paid_amount, i.serie, i.folio, i.warehouse_id, i.total, i.pac, t.rfc
+    FROM sales_invoices i JOIN third_parties t ON t.id = i.third_party_id WHERE i.id = ${id} FOR UPDATE OF i`;
   if (!inv) throw notFound("Factura");
   if (inv.status === "draft") {
     await tx`UPDATE sales_invoices SET status = 'cancelled' WHERE id = ${id}`;
@@ -250,7 +278,16 @@ export async function cancelSalesInvoice(tx: Db, id: number, pac: PacProvider, m
   if (D(inv.paid_amount).gt(0)) throw conflict("La factura tiene cobros; cancélalos o emite una nota de crédito");
   if (!["01", "02", "03", "04"].includes(motivo)) throw badRequest("Motivo de cancelación inválido");
   if (motivo === "01" && !folioSustitucion) throw badRequest("El motivo 01 requiere el UUID que sustituye a esta factura");
-  const result = await pac.cancel(inv.uuid!, motivo, folioSustitucion);
+  // Sandbox CFDIs never reached SAT, so they cancel locally whatever PAC is configured now.
+  const pac = inv.pac === "sandbox" ? new SandboxPac() : svc.pac;
+  if (inv.pac && inv.pac !== pac.name) throw conflict(`La factura se timbró con el PAC "${inv.pac}"; cancélala con ese PAC`);
+  const stored = pac.requiresCsd ? await activeCsd(tx, svc.secretKey) : undefined;
+  if (pac.requiresCsd && !stored) throw new AppError(422, "Se requiere el CSD de la empresa para cancelar");
+  const [company] = await tx<{ rfc: string }[]>`SELECT rfc FROM company WHERE id = 1`;
+  const result: CancelResult = await pac.cancel({
+    uuid: inv.uuid!, rfcEmisor: company!.rfc, rfcReceptor: inv.rfc, total: inv.total, motivo, folioSustitucion,
+    csd: stored ? { cer: stored.cer, key: stored.key, password: stored.password } : { cer: Buffer.alloc(0), key: Buffer.alloc(0), password: "" },
+  }).catch((err) => { throw pacFailed(err); });
   if (result.status !== "cancelled") throw conflict("El receptor debe aceptar la cancelación; vuelve a intentarlo más tarde");
 
   const date = new Date().toISOString().slice(0, 10);
@@ -263,6 +300,6 @@ export async function cancelSalesInvoice(tx: Db, id: number, pac: PacProvider, m
   const entries = await tx<{ id: number }[]>`
     SELECT id FROM journal_entries WHERE source_type = 'sales_invoice' AND source_id = ${id} AND status = 'posted' ORDER BY id`;
   for (const e of entries) await reverseEntry(tx, e.id, date, `Cancelación factura ${inv.serie}-${inv.folio}`);
-  await tx`UPDATE sales_invoices SET status = 'cancelled' WHERE id = ${id}`;
+  await tx`UPDATE sales_invoices SET status = 'cancelled', cancel_acuse = ${result.acuse ?? null} WHERE id = ${id}`;
   return { id, status: "cancelled" };
 }

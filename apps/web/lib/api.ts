@@ -1,44 +1,122 @@
 "use client";
-import { createClient, type ErpClient, type SatCatalogs } from "@erp/client";
+import { createClient, type AuthProfile, type ErpClient, type SatCatalogs } from "@erp/client";
 
-const STORAGE_KEY = "erp.settings";
+const SETTINGS_KEY = "erp.settings";
+const SESSION_KEY = "erp.session";
 export const DEFAULT_API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
-export const DEFAULT_API_TOKEN = process.env.NEXT_PUBLIC_API_TOKEN || "";
+export const LOGIN_PATH = "/login/";
 
-export interface ApiSettings { apiUrl: string; token: string }
+export interface ApiSettings { apiUrl: string }
+export interface Session { token: string; expiresAt?: string; profile: AuthProfile }
 
-export function loadSettings(): ApiSettings {
-  let stored: Partial<ApiSettings> = {};
+function readJson<T>(key: string): T | null {
   try {
-    const raw = typeof window !== "undefined" ? window.localStorage.getItem(STORAGE_KEY) : null;
-    if (raw) stored = JSON.parse(raw) as Partial<ApiSettings>;
+    const raw = typeof window !== "undefined" ? window.localStorage.getItem(key) : null;
+    return raw ? (JSON.parse(raw) as T) : null;
   } catch {
-    /* localStorage unavailable or corrupt: use defaults */
+    return null; /* localStorage unavailable or corrupt */
   }
-  return { apiUrl: stored.apiUrl || DEFAULT_API_URL, token: stored.token ?? DEFAULT_API_TOKEN };
 }
-
-export function saveSettings(s: Partial<ApiSettings>): void {
+function writeJson(key: string, value: unknown): void {
   try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(s));
+    if (value === null) window.localStorage.removeItem(key);
+    else window.localStorage.setItem(key, JSON.stringify(value));
   } catch {
     /* ignore */
   }
-  cached = null;
-  catalogs = null;
 }
 
-let cached: { key: string; client: ErpClient } | null = null;
+export function loadSettings(): ApiSettings {
+  const stored = readJson<Partial<ApiSettings>>(SETTINGS_KEY) ?? {};
+  return { apiUrl: stored.apiUrl || DEFAULT_API_URL };
+}
 
-/** Returns the API client built from env defaults or the user's overrides. */
+/** Saves the API URL override (empty = default). Changing the server ends the current session. */
+export function saveSettings(s: Partial<ApiSettings>): void {
+  const prev = loadSettings().apiUrl;
+  writeJson(SETTINGS_KEY, s.apiUrl ? { apiUrl: s.apiUrl } : {});
+  if (loadSettings().apiUrl !== prev) clearSession();
+  resetCaches();
+}
+
+// ---------- Session ----------
+
+type Listener = (s: Session | null) => void;
+const listeners = new Set<Listener>();
+
+/** Subscribes to session changes (login, logout, profile refresh, expiry). */
+export function onSessionChange(fn: Listener): () => void {
+  listeners.add(fn);
+  return () => { listeners.delete(fn); };
+}
+
+export function loadSession(): Session | null {
+  const s = readJson<Session>(SESSION_KEY);
+  return s && typeof s.token === "string" && s.profile?.user ? s : null;
+}
+
+export function saveSession(s: Session): void {
+  writeJson(SESSION_KEY, s);
+  resetCaches();
+  listeners.forEach((fn) => fn(s));
+}
+
+/** Replaces the stored profile (e.g. after me()) keeping the token. */
+export function updateProfile(profile: AuthProfile): void {
+  const s = loadSession();
+  if (s) saveSession({ ...s, profile });
+}
+
+export function clearSession(): void {
+  const had = loadSession() !== null;
+  writeJson(SESSION_KEY, null);
+  resetCaches();
+  if (had) listeners.forEach((fn) => fn(null));
+}
+
+/** Current path + query, to come back after logging in. */
+export function currentLocation(): string {
+  if (typeof window === "undefined") return "/";
+  return `${window.location.pathname}${window.location.search}`;
+}
+
+/** URL of the login page that returns to `next` afterwards. */
+export function loginHref(next = currentLocation()): string {
+  const safe = next && next.startsWith("/") && !next.startsWith(LOGIN_PATH) && !next.startsWith("/login") ? next : "";
+  return safe && safe !== "/" ? `${LOGIN_PATH}?next=${encodeURIComponent(safe)}` : LOGIN_PATH;
+}
+
+/** Clears the session and sends the browser to the login page (used on any 401). */
+export function handleUnauthorized(): void {
+  clearSession();
+  if (typeof window === "undefined") return;
+  if (window.location.pathname.startsWith("/login")) return;
+  window.location.assign(loginHref());
+}
+
+/** Ends the session on the server (best effort) and locally. */
+export async function logout(): Promise<void> {
+  try { await api().logout(); } catch { /* already expired or offline */ }
+  clearSession();
+}
+
+// ---------- Client ----------
+
+let cached: { key: string; client: ErpClient } | null = null;
+let catalogs: Promise<SatCatalogs> | null = null;
+function resetCaches() { cached = null; catalogs = null; }
+
+/** Returns the API client for the configured server, authenticated with the current session. */
 export function api(): ErpClient {
-  const s = loadSettings();
-  const key = `${s.apiUrl}|${s.token}`;
-  if (!cached || cached.key !== key) cached = { key, client: createClient({ baseUrl: s.apiUrl, token: s.token || undefined }) };
+  const { apiUrl } = loadSettings();
+  const token = loadSession()?.token ?? "";
+  const key = `${apiUrl}|${token}`;
+  if (!cached || cached.key !== key) {
+    cached = { key, client: createClient({ baseUrl: apiUrl, token: token || undefined, onUnauthorized: handleUnauthorized }) };
+  }
   return cached.client;
 }
 
-let catalogs: Promise<SatCatalogs> | null = null;
 /** SAT catalogs rarely change; cache them for the session. */
 export function satCatalogs(): Promise<SatCatalogs> {
   if (!catalogs) {
@@ -48,11 +126,12 @@ export function satCatalogs(): Promise<SatCatalogs> {
   return catalogs;
 }
 
-/** Downloads a file from the API sending the bearer token, then saves it via a blob link. */
+/** Downloads a file from the API sending the session token, then saves it via a blob link. */
 export async function downloadFile(path: string, fallbackName: string): Promise<void> {
-  const s = loadSettings();
-  const res = await fetch(api().url(path), { headers: s.token ? { authorization: `Bearer ${s.token}` } : {} });
+  const token = loadSession()?.token;
+  const res = await fetch(api().url(path), { headers: token ? { authorization: `Bearer ${token}` } : {} });
   if (!res.ok) {
+    if (res.status === 401) handleUnauthorized();
     let message = `HTTP ${res.status}`;
     try {
       const body = (await res.json()) as { error?: string };

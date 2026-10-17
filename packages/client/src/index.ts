@@ -73,6 +73,20 @@ export interface SatCatalogs {
 export interface SalesLineInput { productId?: number; description?: string; qty: number | string; unitPrice?: number | string; discount?: number | string; retIvaRate?: string; retIsrRate?: string }
 export interface SupplierLineInput { productId?: number; accountId?: number; description?: string; qty: number | string; unitPrice: number | string; ivaRate?: string; retIvaRate?: string; retIsrRate?: string }
 
+export type Role = "admin" | "contador" | "ventas" | "almacen" | "consulta";
+export type Area = "accounting" | "sales" | "purchases" | "parties" | "inventory" | "products" | "banks" | "company" | "users" | "ai" | "common";
+export interface AuthUser { id: number; email: string; name: string; role: Role }
+export interface AuthProfile { user: AuthUser; roleLabel: string; permissions: { read: Area[]; write: Area[] } }
+export interface LoginResult extends AuthProfile { token: string; expiresAt: string }
+export interface UserRow { id: number; email: string; name: string; role: Role; active: boolean; last_login_at: string | null; created_at: string }
+export interface RoleInfo { code: Role; label: string; permissions: { read: Area[]; write: Area[] } }
+export interface CsdInfo { rfc: string; noCertificado: string; validFrom: string; validTo: string; uploadedAt: string }
+
+/** Whether the signed-in user's role may open (or, with write, change) an area. */
+export function canAccess(profile: AuthProfile | null | undefined, area: Area, write = false): boolean {
+  return !!profile && (write ? profile.permissions.write : profile.permissions.read).includes(area);
+}
+
 export class ApiError extends Error {
   constructor(public status: number, message: string, public details?: unknown) {
     super(message);
@@ -81,8 +95,11 @@ export class ApiError extends Error {
 
 export interface ClientOptions {
   baseUrl: string;
+  /** Session token from login(). */
   token?: string;
   fetch?: typeof fetch;
+  /** Called when the API answers 401 (no session or it expired), e.g. to show the login screen. */
+  onUnauthorized?: () => void;
 }
 
 export function createClient(opts: ClientOptions) {
@@ -101,6 +118,7 @@ export function createClient(opts: ClientOptions) {
     const type = res.headers.get("content-type") ?? "";
     const data = type.includes("json") ? await res.json() : await res.text();
     if (!res.ok) {
+      if (res.status === 401 && path !== "/auth/login") opts.onUnauthorized?.();
       const err = data as { error?: string; details?: unknown };
       throw new ApiError(res.status, err?.error ?? `HTTP ${res.status}`, err?.details);
     }
@@ -113,11 +131,25 @@ export function createClient(opts: ClientOptions) {
   const get = <T>(path: string) => request<T>("GET", path);
   const post = <T>(path: string, body: unknown = {}) => request<T>("POST", path, body);
   const put = <T>(path: string, body: unknown) => request<T>("PUT", path, body);
+  const patch = <T>(path: string, body: unknown) => request<T>("PATCH", path, body);
 
   return {
     /** Absolute URL for downloads (XML files); add the token header yourself if the API requires one. */
     url: (path: string) => `${base}${path}`,
     request,
+
+    login: (email: string, password: string) => post<LoginResult>("/auth/login", { email, password }),
+    logout: () => post<{ ok: true }>("/auth/logout"),
+    me: () => get<AuthProfile>("/auth/me"),
+    changePassword: (currentPassword: string, newPassword: string) => post<{ ok: true }>("/auth/password", { currentPassword, newPassword }),
+    users: () => get<UserRow[]>("/users"),
+    roles: () => get<RoleInfo[]>("/users/roles"),
+    createUser: (b: { email: string; name: string; role: Role; password: string }) => post<UserRow>("/users", b),
+    updateUser: (id: number, b: { name?: string; role?: Role; active?: boolean; password?: string }) => patch<UserRow>(`/users/${id}`, b),
+    /** The company's active CSD (certificate data only), or null. */
+    csd: () => get<CsdInfo | null>("/company/csd"),
+    /** Upload the CSD: .cer and .key file contents in base64 plus the key password. */
+    uploadCsd: (b: { cer: string; key: string; password: string }) => put<CsdInfo>("/company/csd", b),
 
     satCatalogs: () => get<SatCatalogs>("/sat/catalogs"),
     searchProdServ: (q: string) => get<CatalogEntry[]>(`/sat/prodserv${qs({ q })}`),

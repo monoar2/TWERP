@@ -11,7 +11,8 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
-    "seed:demo": "tsx src/cli/seed-demo.ts"
+    "seed:demo": "tsx src/cli/seed-demo.ts",
+    "user:create": "tsx src/cli/create-user.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.133.0",

@@ -1,30 +1,76 @@
 import { StatusBar } from "expo-status-bar";
-import { useMemo, useState } from "react";
+import { canAccess, type Area } from "@erp/client";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
-import { defaultConfig, makeClient, type ApiConfig } from "./api";
+import { defaultBaseUrl, makeClient, type Session } from "./api";
 import { AskScreen } from "./screens/Ask";
 import { DashboardScreen } from "./screens/Dashboard";
 import { InvoicesScreen } from "./screens/Invoices";
+import { LoginScreen } from "./screens/Login";
 import { SettingsScreen } from "./screens/Settings";
 import { StockScreen } from "./screens/Stock";
 import { useTheme } from "./theme";
 
-const TABS = [
-  { key: "home", label: "Inicio" },
-  { key: "stock", label: "Inventario" },
-  { key: "invoices", label: "Facturas" },
-  { key: "ask", label: "IA" },
-  { key: "settings", label: "Ajustes" },
-] as const;
-type Tab = (typeof TABS)[number]["key"];
+const TABS: ReadonlyArray<{ key: Tab; label: string; area: Area | null }> = [
+  { key: "home", label: "Inicio", area: "common" },
+  { key: "stock", label: "Inventario", area: "inventory" },
+  { key: "invoices", label: "Facturas", area: "sales" },
+  { key: "ask", label: "IA", area: "ai" },
+  { key: "settings", label: "Ajustes", area: null },
+];
+type Tab = "home" | "stock" | "invoices" | "ask" | "settings";
 
 export default function App() {
   const t = useTheme();
   const [tab, setTab] = useState<Tab>("home");
-  const [config, setConfig] = useState<ApiConfig>(defaultConfig);
-  const api = useMemo(() => makeClient(config), [config]);
-  const title = TABS.find((x) => x.key === tab)!.label;
+  // Session lives in memory only: the app has no storage package, so a restart asks to log in again.
+  const [session, setSession] = useState<Session | null>(null);
+  const [lastBaseUrl, setLastBaseUrl] = useState(defaultBaseUrl);
+  const [loginNotice, setLoginNotice] = useState<string | null>(null);
+  const [loggingOut, setLoggingOut] = useState(false);
+
+  // Any 401 (expired, revoked or deactivated user) goes back to the login screen.
+  const expire = useCallback(() => {
+    setLoginNotice("Tu sesión expiró o fue cerrada. Vuelve a iniciar sesión.");
+    setSession(null);
+  }, []);
+  const api = useMemo(() => (session ? makeClient(session.baseUrl, session.token, expire) : null), [session?.baseUrl, session?.token, expire]);
+
+  // Refresh the profile once per session: the role may have changed since the token was issued.
+  useEffect(() => {
+    if (!api) return;
+    api.me().then((profile) => setSession((s) => (s ? { ...s, profile } : s))).catch(() => { /* 401 handled by expire */ });
+  }, [api]);
+
+  const tabs = session ? TABS.filter((x) => !x.area || canAccess(session.profile, x.area)) : [];
+  const current = tabs.some((x) => x.key === tab) ? tab : (tabs[0]?.key ?? "settings");
+  const title = TABS.find((x) => x.key === current)!.label;
+
+  function login(s: Session) {
+    setLastBaseUrl(s.baseUrl);
+    setLoginNotice(null);
+    setTab("home");
+    setSession(s);
+  }
+  async function logout() {
+    setLoggingOut(true);
+    try { await api?.logout(); } catch { /* already expired or offline */ }
+    setLoggingOut(false);
+    setLoginNotice(null);
+    setSession(null);
+  }
+
+  if (!session || !api) {
+    return (
+      <SafeAreaProvider>
+        <SafeAreaView style={{ flex: 1, backgroundColor: t.bg }}>
+          <StatusBar style={t.dark ? "light" : "dark"} />
+          <LoginScreen t={t} initialBaseUrl={lastBaseUrl} notice={loginNotice} onLogin={login} />
+        </SafeAreaView>
+      </SafeAreaProvider>
+    );
+  }
 
   return (
     <SafeAreaProvider>
@@ -32,22 +78,22 @@ export default function App() {
         <StatusBar style={t.dark ? "light" : "dark"} />
         <Text accessibilityRole="header" style={{ color: t.text, fontSize: 24, fontWeight: "700", paddingHorizontal: 16, paddingTop: 8 }}>{title}</Text>
         <View style={{ flex: 1 }}>
-          {tab === "home" && <DashboardScreen api={api} t={t} />}
-          {tab === "stock" && <StockScreen api={api} t={t} />}
-          {tab === "invoices" && <InvoicesScreen api={api} t={t} />}
-          {tab === "ask" && <AskScreen api={api} t={t} />}
-          {tab === "settings" && <SettingsScreen t={t} config={config} onSave={(c) => { setConfig(c); setTab("home"); }} />}
+          {current === "home" && <DashboardScreen api={api} t={t} />}
+          {current === "stock" && <StockScreen api={api} t={t} />}
+          {current === "invoices" && <InvoicesScreen api={api} t={t} />}
+          {current === "ask" && <AskScreen api={api} t={t} />}
+          {current === "settings" && <SettingsScreen t={t} session={session} onLogout={logout} loggingOut={loggingOut} />}
         </View>
         <View accessibilityRole="tablist" style={{ flexDirection: "row", borderTopWidth: 1, borderColor: t.border, backgroundColor: t.card }}>
-          {TABS.map((x) => (
+          {tabs.map((x) => (
             <Pressable
               key={x.key}
               accessibilityRole="tab"
-              accessibilityState={{ selected: tab === x.key }}
+              accessibilityState={{ selected: current === x.key }}
               onPress={() => setTab(x.key)}
               style={{ flex: 1, alignItems: "center", paddingVertical: 12, minHeight: 48 }}
             >
-              <Text style={{ color: tab === x.key ? t.accent : t.muted, fontWeight: tab === x.key ? "700" : "400", fontSize: 13 }}>{x.label}</Text>
+              <Text style={{ color: current === x.key ? t.accent : t.muted, fontWeight: current === x.key ? "700" : "400", fontSize: 13 }}>{x.label}</Text>
             </Pressable>
           ))}
         </View>
