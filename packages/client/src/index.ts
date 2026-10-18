@@ -63,7 +63,44 @@ export interface Dashboard {
   topProducts: Array<{ sku: string; name: string; qty: string; sales: Money }>;
 }
 export interface AiQuery { sql: string; purpose: string; rowCount: number; columns: string[]; rows: Record<string, unknown>[]; truncated: boolean; error?: string }
-export interface AiAnswer { answer: string; queries: AiQuery[]; model: string; usage: { inputTokens: number; outputTokens: number } }
+export interface AiChartSpec { type: "bar" | "line" | "pie"; x: string; y: string[] }
+export interface AiChart extends AiChartSpec { title: string; sql: string; columns: string[]; rows: Record<string, unknown>[] }
+export type ProposalStatus = "pending" | "applied" | "rejected" | "failed";
+export interface AiProposal {
+  id: number; kind: string; label: string; summary: string; payload: Record<string, unknown>;
+  preview: Record<string, unknown>; status: ProposalStatus; createdAt: string;
+}
+export interface AiAnswer { answer: string; queries: AiQuery[]; charts: AiChart[]; proposals: AiProposal[]; model: string; usage: { inputTokens: number; outputTokens: number } }
+export interface AiWidget { id: number; title: string; question: string | null; sql: string; chart: AiChartSpec; position: number; columns: string[]; rows: Record<string, unknown>[]; error: string | null }
+
+export interface IntakeWarning { level: "error" | "warning" | "info"; message: string }
+export interface IntakeLine {
+  description: string; productId: number | null; productName: string | null; matchedBy: "sku" | "name" | null; score: number | null;
+  qty: string; unitPrice: string; discount: string; ivaRate: string; retIvaRate: string; retIsrRate: string;
+}
+export interface IntakeSuggestion {
+  thirdPartyId: number | null; supplierName: string | null;
+  newSupplier: { name: string; rfc: string; regimenFiscal: string; codigoPostal: string } | null;
+  warehouseId: number | null; supplierRef: string | null; uuid: string | null; issueDate: string | null; metodoPago: "PUE" | "PPD";
+  lines: IntakeLine[]; computedTotal: Money;
+}
+export interface Intake {
+  id: number; file_name: string; media_type: string; source: "cfdi_xml" | "pdf" | "image"; status: "extracted" | "posted" | "discarded";
+  extracted: { supplier: { rfc: string | null; name: string | null }; total: string | null; subtotal: string | null; iva: string | null; currency: string; documentType: string };
+  suggestion: IntakeSuggestion; warnings: IntakeWarning[]; model: string | null; supplier_invoice_id: number | null; created_at: string; created_by_name: string | null;
+}
+export interface IntakeSummary { id: number; file_name: string; source: Intake["source"]; status: Intake["status"]; supplier_invoice_id: number | null; created_at: string; supplier_name: string | null; total: Money | null; created_by_name: string | null }
+export interface IntakeConfirm {
+  thirdPartyId?: number; newSupplier?: { name: string; rfc: string; regimenFiscal: string; codigoPostal: string }; warehouseId?: number;
+  supplierRef?: string; issueDate?: string; metodoPago?: "PUE" | "PPD"; lines?: SupplierLineInput[]; validate?: boolean;
+}
+
+export type FindingSeverity = "high" | "medium" | "low";
+export interface AuditFinding {
+  id: number; check_code: string; severity: FindingSeverity; title: string; detail: string; evidence: Record<string, unknown>;
+  status: "open" | "dismissed" | "resolved"; first_seen: string; last_seen: string; note: string | null; dismissed_by_name: string | null;
+}
+export interface AuditRun { id: number; started_at: string; finished_at: string | null; trigger: "manual" | "schedule"; findings: number; new_findings: number; summary: string | null; model: string | null; error: string | null }
 export interface CatalogEntry { code: string; description: string }
 export interface SatCatalogs {
   regimenesFiscales: Array<CatalogEntry & { fisica: boolean; moral: boolean }>; usosCfdi: CatalogEntry[]; formasPago: CatalogEntry[];
@@ -71,7 +108,7 @@ export interface SatCatalogs {
 }
 
 export interface SalesLineInput { productId?: number; description?: string; qty: number | string; unitPrice?: number | string; discount?: number | string; retIvaRate?: string; retIsrRate?: string }
-export interface SupplierLineInput { productId?: number; accountId?: number; description?: string; qty: number | string; unitPrice: number | string; ivaRate?: string; retIvaRate?: string; retIsrRate?: string }
+export interface SupplierLineInput { productId?: number; accountId?: number; description?: string; qty: number | string; unitPrice: number | string; discount?: number | string; ivaRate?: string; retIvaRate?: string; retIsrRate?: string }
 
 export type Role = "admin" | "contador" | "ventas" | "almacen" | "consulta";
 export type Area = "accounting" | "sales" | "purchases" | "parties" | "inventory" | "products" | "banks" | "company" | "users" | "ai" | "common";
@@ -132,6 +169,7 @@ export function createClient(opts: ClientOptions) {
   const post = <T>(path: string, body: unknown = {}) => request<T>("POST", path, body);
   const put = <T>(path: string, body: unknown) => request<T>("PUT", path, body);
   const patch = <T>(path: string, body: unknown) => request<T>("PATCH", path, body);
+  const del = <T>(path: string) => request<T>("DELETE", path);
 
   return {
     /** Absolute URL for downloads (XML files); add the token header yourself if the API requires one. */
@@ -213,6 +251,26 @@ export function createClient(opts: ClientOptions) {
     salesInvoiceXmlPath: (id: number) => `/sales-invoices/${id}/xml`,
 
     askAi: (question: string, history: Array<{ role: "user" | "assistant"; content: string }> = []) => post<AiAnswer>("/ai/query", { question, history }),
+    proposals: (status?: ProposalStatus) => get<Array<Omit<AiProposal, "preview" | "createdAt"> & { result: Record<string, unknown> | null; created_at: string; user_name: string | null }>>(`/ai/proposals${qs({ status })}`),
+    applyProposal: (id: number) => post<{ id: number; status: "applied"; result: Record<string, unknown> }>(`/ai/proposals/${id}/apply`),
+    rejectProposal: (id: number) => post<{ id: number; status: "rejected" }>(`/ai/proposals/${id}/reject`),
+    widgets: () => get<AiWidget[]>("/ai/widgets"),
+    pinWidget: (b: { title: string; question?: string; sql: string; chart: AiChartSpec }) => post<AiWidget>("/ai/widgets", b),
+    updateWidget: (id: number, b: { title?: string; position?: number }) => patch(`/ai/widgets/${id}`, b),
+    deleteWidget: (id: number) => del<{ ok: true }>(`/ai/widgets/${id}`),
+
+    intakes: () => get<IntakeSummary[]>("/intake"),
+    intake: (id: number) => get<Intake>(`/intake/${id}`),
+    /** Upload a CFDI XML, PDF or image (content in base64). */
+    uploadIntake: (b: { fileName: string; mediaType: string; contentBase64: string }) => post<Intake>("/intake", b),
+    confirmIntake: (id: number, b: IntakeConfirm) => post<{ intakeId: number; supplierInvoiceId: number; thirdPartyId: number; journalEntryId: number | null }>(`/intake/${id}/confirm`, b),
+    discardIntake: (id: number) => post(`/intake/${id}/discard`),
+
+    auditFindings: (status: "open" | "dismissed" | "resolved" | "all" = "open") => get<AuditFinding[]>(`/audit/findings${qs({ status })}`),
+    auditRuns: () => get<AuditRun[]>("/audit/runs"),
+    runAudit: () => post<{ runId: number; findings: number; newFindings: number; resolved: number; summary: string | null }>("/audit/run"),
+    dismissFinding: (id: number, note?: string) => post(`/audit/findings/${id}/dismiss`, { note }),
+    reopenFinding: (id: number) => post(`/audit/findings/${id}/reopen`),
   };
 }
 

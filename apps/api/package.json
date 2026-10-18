@@ -12,6 +12,10 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "seed:demo": "tsx src/cli/seed-demo.ts",
+    "mcp": "tsx src/cli/mcp-stdio.ts",
+    "load:69b": "tsx src/cli/load-69b.ts",
+    "audit": "tsx src/cli/audit.ts",
+    "eval": "tsx src/cli/eval.ts",
     "user:create": "tsx src/cli/create-user.ts"
   },
   "dependencies": {

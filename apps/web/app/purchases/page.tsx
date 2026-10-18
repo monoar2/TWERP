@@ -10,7 +10,7 @@ export default function PurchasesPage() {
   const due = rows.filter((r) => r.status === "validated").reduce((s, r) => s + Number(r.total) - Number(r.paid_amount), 0);
   return (
     <>
-      <PageHeader title="Facturas de proveedor" subtitle={`Saldo por pagar: ${money(due)}`} actions={<Link className="btn btn-primary" href="/purchases/new/">Nueva compra</Link>} />
+      <PageHeader title="Facturas de proveedor" subtitle={`Saldo por pagar: ${money(due)}`} actions={<><Link className="btn" href="/purchases/intake/">Subir factura (IA)</Link><Link className="btn btn-primary" href="/purchases/new/">Nueva compra</Link></>} />
       <Card>
         <ErrorBox error={list.error} />
         {list.loading && !list.data ? <Loading /> : null}

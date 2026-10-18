@@ -18,6 +18,7 @@ const AREAS: Array<[string, Area]> = [
   ["/bank-accounts", "banks"],
   ["/sales-invoices", "sales"],
   ["/supplier-invoices", "purchases"],
+  ["/intake", "purchases"],
   ["/third-parties", "parties"],
   ["/stock", "inventory"],
   ["/inventory-counts", "inventory"],
@@ -29,7 +30,9 @@ const AREAS: Array<[string, Area]> = [
   ["/reports", "accounting"],
   ["/periods", "accounting"],
   ["/sat/electronic-accounting", "accounting"],
+  ["/audit", "accounting"],
   ["/ai", "ai"],
+  ["/mcp", "ai"],
   ["/sat", "common"],
   ["/dashboard", "common"],
 ];

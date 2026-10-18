@@ -46,3 +46,7 @@ Las cuentas usadas se resuelven por clave en `account_settings`, así que el cat
 La frontera de seguridad real es la base de datos: `erp_ai_reader` sólo tiene `SELECT` sobre las vistas del esquema `ai`, que no exponen el XML de las facturas ni tablas internas. El filtro en código es una segunda capa.
 
 Modelo por omisión: `claude-opus-5-5` (variable `AI_MODEL`), con pensamiento adaptativo, esfuerzo medio y *fallback* del lado del servidor cuando un clasificador rechaza la petición.
+
+## Más funciones de IA
+
+Captura de facturas, propuestas del copiloto, gráficas fijadas, auditor, servidor MCP y evaluación: ver [ai-features.md](ai-features.md). Tablas nuevas en la migración `0005_ai_features.sql`: `document_intakes`, `ai_proposals`, `ai_widgets`, `sat_69b`, `audit_runs` y `audit_findings`.

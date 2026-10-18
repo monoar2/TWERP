@@ -6,10 +6,13 @@ import { userForToken, type SessionUser } from "./auth/sessions.js";
 import { AppError } from "./errors.js";
 import { accountingRoutes } from "./routes/accounting.js";
 import { aiRoutes } from "./routes/ai.js";
+import { auditRoutes } from "./routes/audit.js";
 import { authRoutes } from "./routes/auth.js";
 import { catalogRoutes } from "./routes/catalog.js";
 import { documentRoutes } from "./routes/documents.js";
+import { intakeRoutes } from "./routes/intake.js";
 import { inventoryRoutes } from "./routes/inventory.js";
+import { mcpRoutes } from "./routes/mcp.js";
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -66,5 +69,8 @@ export async function buildServer(ctx: AppContext, opts: { logger?: boolean } = 
   await documentRoutes(app, ctx);
   await accountingRoutes(app, ctx);
   await aiRoutes(app, ctx);
+  await intakeRoutes(app, ctx);
+  await auditRoutes(app, ctx);
+  await mcpRoutes(app, ctx);
   return app;
 }

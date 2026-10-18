@@ -6,3 +6,4 @@ export * from "./cfdi40.js";
 export * from "./contabilidad.js";
 export { escapeXml } from "./xml.js";
 export * from "./csd.js";
+export * from "./cfdi-parse.js";

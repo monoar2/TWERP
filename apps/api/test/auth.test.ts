@@ -70,8 +70,13 @@ describe("roles", () => {
 
   it("records who made each write", async () => {
     await call(env.app, "POST", "/warehouses", { code: "AUD", name: "Auditoría" });
-    const [row] = await env.sql`SELECT u.email, a.method, a.path, a.status FROM audit_log a JOIN users u ON u.id = a.user_id
-                                WHERE a.path = '/warehouses' ORDER BY a.id DESC LIMIT 1`;
+    // The audit row is written in onResponse, after inject() has resolved.
+    let row: Record<string, unknown> | undefined;
+    for (let i = 0; i < 50 && !row; i++) {
+      [row] = await env.sql`SELECT u.email, a.method, a.path, a.status FROM audit_log a JOIN users u ON u.id = a.user_id
+                            WHERE a.path = '/warehouses' AND a.status = 201 ORDER BY a.id DESC LIMIT 1`;
+      if (!row) await new Promise((r) => setTimeout(r, 20));
+    }
     expect(row).toMatchObject({ email: "admin@test.mx", method: "POST", status: 201 });
   });
 
