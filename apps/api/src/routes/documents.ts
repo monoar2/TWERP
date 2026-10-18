@@ -7,7 +7,7 @@ import { createSupplierInvoice, validateSupplierInvoice } from "../services/purc
 import { cancelSalesInvoice, createSalesInvoice, issueSalesInvoice } from "../services/sales.js";
 import { date, id, idParam, num, parse } from "../validate.js";
 
-const salesLine = z.object({
+export const salesLine = z.object({
   productId: id.optional(),
   description: z.string().optional(),
   qty: num,
@@ -23,7 +23,7 @@ const salesLine = z.object({
   unitName: z.string().optional(),
 });
 
-const supplierLine = z.object({
+export const supplierLine = z.object({
   productId: id.optional(),
   accountId: id.optional(),
   description: z.string().optional(),

@@ -2,6 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { createDb } from "@erp/db";
 import { parseSecretKey } from "./secrets.js";
 import { buildServer } from "./server.js";
+import { scheduleAudits } from "./services/auditor.js";
 import { pacFromEnv } from "./services/pac.js";
 
 const sql = createDb(process.env.DATABASE_URL);
@@ -28,5 +29,9 @@ const app = await buildServer(
   },
   { logger: true },
 );
+
+// The auditor runs every AUDIT_INTERVAL_HOURS (default 24; 0 turns it off).
+scheduleAudits({ sql, messages: anthropic?.beta.messages, model: process.env.AI_MODEL ?? "claude-opus-5-5" }, Number(process.env.AUDIT_INTERVAL_HOURS ?? 24),
+  (msg, err) => (err ? app.log.error(err, msg) : app.log.info(msg)));
 
 await app.listen({ port: Number(process.env.API_PORT ?? 4000), host: "0.0.0.0" });

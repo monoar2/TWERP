@@ -34,7 +34,7 @@ describe("purchases and weighted average cost", () => {
     const { app } = env;
     for (const [qty, price] of [[10, 10000], [10, 12000]] as const) {
       const { id } = await call(app, "POST", "/supplier-invoices", {
-        thirdPartyId: ids.supplier, warehouseId: ids.warehouse, uuid: "5FB2822E-396D-4725-8521-CDC4BDD20CCF".replace("5FB", `${qty}${price}`.slice(0, 3)),
+        thirdPartyId: ids.supplier, warehouseId: ids.warehouse, uuid: "5FB2822E-396D-4725-8521-CDC4BDD20CCF".replace("5FB", String(price).slice(0, 3)),
         lines: [{ productId: ids.laptop, qty, unitPrice: price }],
       });
       ids.purchase1 ||= id;
