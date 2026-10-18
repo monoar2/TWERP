@@ -13,7 +13,15 @@ ERP para empresas mexicanas con inventarios, facturación CFDI 4.0, contabilidad
 - **Impuestos**: IVA mensual en flujo de efectivo y pago provisional de ISR de personas morales.
 - **SAT**: XML de catálogo de cuentas, balanza y pólizas (Anexo 24, versión 1.3).
 - **Usuarios**: inicio de sesión con correo y contraseña, roles (administrador, contador, ventas, almacén, sólo consulta) y bitácora de cambios.
-- **IA**: preguntas como "¿qué productos están bajo el mínimo?" o "¿cuánto me debe Comercializadora del Bajío?" respondidas con consultas SQL de solo lectura.
+- **IA**: preguntas como "¿qué productos están bajo el mínimo?" o "¿cuánto me debe Comercializadora del Bajío?" respondidas con consultas SQL de solo lectura, y además:
+  - **Captura de facturas**: arrastra el XML, el PDF o una foto de una factura de proveedor y el ERP llena la compra, relaciona los productos y avisa de duplicados o proveedores en la lista 69-B.
+  - **Copiloto**: "prepara una factura de 2 monitores para Comercializadora del Bajío" deja un borrador con los totales reales; nada cambia hasta que lo apliques.
+  - **Gráficas**: pide una gráfica y fíjala en el inicio; se recalcula cada vez que lo abres.
+  - **Auditor**: revisa los libros cada día (duplicados, 69-B, ventas bajo costo, precios atípicos, cobranza vencida…) y resume qué atender primero.
+  - **Servidor MCP**: usa el ERP desde Claude Desktop o Claude Code.
+  - **Evaluación**: 21 preguntas con respuesta conocida miden la precisión del asistente.
+
+  Detalles en [docs/ai-features.md](docs/ai-features.md).
 
 La estructura de módulos toma como referencia [Dolibarr ERP-CRM](https://www.dolibarr.org/); el código es propio. Detalles en [docs/architecture.md](docs/architecture.md).
 
@@ -57,6 +65,7 @@ Al timbrar, la factura toma la fecha y hora actuales (`ERP_TIMEZONE`), porque el
 ```bash
 pnpm test        # lógica fiscal + pruebas de integración de la API contra Postgres
 pnpm typecheck
+ANTHROPIC_API_KEY=... pnpm --filter @erp/api eval   # precisión de la IA sobre los datos de demostración
 ```
 
 Las pruebas de la API crean y borran una base temporal usando `TEST_DATABASE_URL` (por omisión `postgres://erp:erp@localhost:5432/postgres`).
@@ -68,3 +77,4 @@ Las pruebas de la API crean y borran una base temporal usando `TEST_DATABASE_URL
 - Cada rol sólo ve y modifica sus módulos; las escrituras quedan en la tabla `audit_log`.
 - La llave privada del CSD y su contraseña se guardan cifradas con AES-256-GCM usando `ERP_SECRET_KEY`.
 - La IA sólo puede leer las vistas del esquema `ai` mediante el rol `erp_ai_reader`, en transacciones de solo lectura con límite de tiempo y filas.
+- Las operaciones que propone la IA se ejecutan en seco y sólo se aplican cuando una persona con el rol adecuado las confirma.

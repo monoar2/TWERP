@@ -34,6 +34,7 @@ export const NAV: NavItem[] = [
     children: [
       { href: "/purchases/", label: "Facturas de proveedor" },
       { href: "/purchases/new/", label: "Nueva compra" },
+      { href: "/purchases/intake/", label: "Subir factura (IA)" },
     ],
   },
   {
@@ -53,6 +54,7 @@ export const NAV: NavItem[] = [
       { href: "/taxes/sat-export/", label: "Contabilidad electrónica" },
     ],
   },
+  { href: "/audit/", label: "Auditor", icon: "shield", match: ["/audit"], area: "accounting" },
   { href: "/ai/", label: "Pregúntale a la IA", icon: "sparkles", match: ["/ai"], area: "ai" },
   {
     href: "/settings/", label: "Configuración", icon: "settings", match: ["/settings"], area: "common",

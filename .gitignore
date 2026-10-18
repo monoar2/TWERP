@@ -9,3 +9,4 @@ out/
 apps/desktop/src-tauri/target/
 apps/desktop/src-tauri/gen/
 coverage/
+apps/api/evals/results/

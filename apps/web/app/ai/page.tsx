@@ -1,18 +1,86 @@
 "use client";
-import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
-import type { AiAnswer, AiQuery } from "@erp/client";
+import { Fragment, useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import Link from "next/link";
+import type { AiAnswer, AiChart, AiProposal, AiQuery } from "@erp/client";
 import { api } from "@/lib/api";
-import { ErrorBox, PageHeader, useAction } from "@/components/ui";
+import { money } from "@/lib/format";
+import { ErrorBox, PageHeader, StatusChip, useAction } from "@/components/ui";
+import { Chart } from "@/components/Chart";
 import { Markdown } from "@/components/Markdown";
 
 type Turn = { role: "user"; content: string } | { role: "assistant"; content: string; answer: AiAnswer };
 
 const SUGGESTIONS = [
   "¿Cuánto vendí este mes y quiénes fueron mis 5 mejores clientes?",
+  "Grafica mis ventas por semana de los últimos 3 meses",
   "¿Qué productos están por debajo de su existencia mínima?",
   "¿Cuánto me deben mis clientes y cuáles facturas están vencidas?",
-  "¿Cuál es mi IVA a cargo del mes pasado?",
+  "¿Qué encontró el auditor y qué debo atender primero?",
+  "Prepara una factura de 2 monitores para Comercializadora del Bajío",
 ];
+
+const PREVIEW_LABELS: Record<string, string> = {
+  customer: "Cliente", subtotal: "Subtotal", iva: "IVA", total: "Total", amount: "Importe", value: "Valor",
+  fromQtyAfter: "Existencia origen después", toQtyAfter: "Existencia destino después",
+};
+const MONEY_KEYS = new Set(["subtotal", "iva", "total", "amount", "value"]);
+
+function ChartBlock({ chart, question }: { chart: AiChart; question: string }) {
+  const [pinned, setPinned] = useState(false);
+  const action = useAction();
+  async function pin() {
+    const r = await action.run(() => api().pinWidget({ title: chart.title, question, sql: chart.sql, chart: { type: chart.type, x: chart.x, y: chart.y } }));
+    if (r) setPinned(true);
+  }
+  return (
+    <div>
+      <Chart spec={chart} rows={chart.rows} title={chart.title} />
+      <div className="proposal-actions" style={{ marginTop: 6 }}>
+        {pinned ? <span className="small muted">Fijada en tu <Link href="/">tablero</Link>; se actualiza con datos nuevos.</span>
+          : <button className="btn btn-sm" onClick={pin} disabled={action.busy}>📌 Fijar en el tablero</button>}
+      </div>
+      <ErrorBox error={action.error} />
+    </div>
+  );
+}
+
+function ProposalCard({ proposal }: { proposal: AiProposal }) {
+  const [status, setStatus] = useState(proposal.status);
+  const [result, setResult] = useState<Record<string, unknown> | null>(null);
+  const action = useAction();
+  async function apply() {
+    const r = await action.run(() => api().applyProposal(proposal.id));
+    if (r) { setStatus("applied"); setResult(r.result); }
+  }
+  async function reject() {
+    const r = await action.run(() => api().rejectProposal(proposal.id));
+    if (r) setStatus("rejected");
+  }
+  const preview = Object.entries(proposal.preview).filter(([k]) => PREVIEW_LABELS[k]);
+  const link = result?.salesInvoiceId ? `/invoices/view/?id=${result.salesInvoiceId}` : result?.journalEntryId ? `/accounting/entries/view/?id=${result.journalEntryId}` : null;
+  return (
+    <div className="proposal">
+      <div className="proposal-head">
+        <strong>{proposal.label}</strong>
+        <StatusChip status={status === "applied" ? "posted" : status === "rejected" ? "cancelled" : "draft"}
+          label={status === "applied" ? "Aplicada" : status === "rejected" ? "Descartada" : "Pendiente"} />
+      </div>
+      <div>{proposal.summary}</div>
+      {preview.length ? (
+        <dl>{preview.map(([k, v]) => <Fragment key={k}><dt>{PREVIEW_LABELS[k]}</dt><dd>{MONEY_KEYS.has(k) ? money(String(v)) : String(v)}</dd></Fragment>)}</dl>
+      ) : null}
+      {status === "pending" ? (
+        <div className="proposal-actions">
+          <button className="btn btn-primary btn-sm" onClick={apply} disabled={action.busy}>Aplicar</button>
+          <button className="btn btn-sm" onClick={reject} disabled={action.busy}>Descartar</button>
+          <span className="small muted">Nada cambia hasta que lo apliques.</span>
+        </div>
+      ) : null}
+      {status === "applied" && link ? <div className="small"><Link href={link}>Abrir el documento creado</Link></div> : null}
+      <ErrorBox error={action.error} />
+    </div>
+  );
+}
 
 function cell(v: unknown): string {
   if (v === null || v === undefined) return "";
@@ -69,7 +137,7 @@ export default function AiPage() {
 
   return (
     <>
-      <PageHeader title="Pregúntale a la IA" subtitle="Consulta tus datos en lenguaje natural. La IA solo tiene acceso de lectura."
+      <PageHeader title="Pregúntale a la IA" subtitle="Consulta tus datos en lenguaje natural, pide gráficas o que te prepare facturas y pólizas. La IA sólo lee; tú confirmas cualquier cambio."
         actions={turns.length ? <button className="btn" onClick={() => { setTurns([]); action.setError(null); }}>Nueva conversación</button> : null} />
       <div className="chat">
         {turns.length === 0 ? (
@@ -86,6 +154,8 @@ export default function AiPage() {
           ) : (
             <div key={i} className="msg msg-assistant">
               <Markdown text={t.answer.answer} />
+              {(t.answer.charts ?? []).map((c, j) => <ChartBlock key={j} chart={c} question={String((turns[i - 1] as { content?: string } | undefined)?.content ?? "")} />)}
+              {(t.answer.proposals ?? []).map((p) => <ProposalCard key={p.id} proposal={p} />)}
               {t.answer.queries.length > 0 ? (
                 <details className="queries">
                   <summary>Consultas SQL ({t.answer.queries.length})</summary>

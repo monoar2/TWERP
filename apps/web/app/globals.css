@@ -26,11 +26,16 @@
   --shadow: 0 1px 2px rgba(15, 23, 42, 0.06), 0 1px 3px rgba(15, 23, 42, 0.08);
   --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  /* Chart series, fixed order (validated for color vision deficiency on these surfaces). */
+  --series-1: #2a78d6; --series-2: #eb6834; --series-3: #1baf7a; --series-4: #eda100;
+  --series-5: #e87ba4; --series-6: #008300; --series-7: #6250d6; --series-8: #e34948;
   color-scheme: light;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
+    --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70; --series-4: #c98500;
+    --series-5: #d55181; --series-6: #008300; --series-7: #9085e9; --series-8: #e66767;
     --bg: #0d1117;
     --surface: #161b22;
     --surface-2: #1c232c;
@@ -273,3 +278,52 @@ details.server-box { border-top: 1px dashed var(--border); padding-top: 10px; ma
 details.server-box summary { cursor: pointer; color: var(--text-2); font-size: 0.9em; }
 details.server-box .field { margin-top: 10px; }
 fieldset.plain { border: 0; margin: 0; padding: 0; min-width: 0; }
+
+/* ---------- Charts ---------- */
+.chart { position: relative; margin: 10px 0 0; padding: 10px 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
+.chart-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.chart-head figcaption { font-weight: 600; }
+.chart-svg { width: 100%; height: auto; display: block; }
+.chart-svg-pie { max-width: 220px; }
+.chart-pie { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+.chart-grid { stroke: var(--border); stroke-width: 1; }
+.chart-axis { stroke: var(--border-strong); stroke-width: 1; }
+.chart-crosshair { stroke: var(--border-strong); stroke-width: 1; stroke-dasharray: 3 3; }
+.chart-tick { fill: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.chart-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; list-style: none; padding: 0; margin: 6px 0; font-size: 0.85rem; color: var(--text-2); }
+.chart-legend-col { flex-direction: column; }
+.swatch { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+.chart-tip { position: absolute; pointer-events: none; z-index: 5; background: var(--surface); border: 1px solid var(--border-strong); border-radius: 8px;
+  box-shadow: var(--shadow); padding: 6px 10px; font-size: 0.82rem; white-space: nowrap; color: var(--text); }
+.widgets { display: grid; gap: 18px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 420px), 1fr)); margin-bottom: 18px; }
+.widget .chart { border: 0; padding: 0; margin: 0; }
+
+/* ---------- AI proposals ---------- */
+.proposal { margin-top: 10px; border: 1px solid var(--primary); border-radius: 10px; padding: 12px; background: var(--primary-soft); }
+.proposal-head { display: flex; justify-content: space-between; gap: 8px; align-items: center; flex-wrap: wrap; }
+.proposal dl { display: grid; grid-template-columns: max-content 1fr; gap: 2px 12px; margin: 8px 0; font-size: 0.9rem; }
+.proposal dt { color: var(--muted); }
+.proposal dd { margin: 0; font-variant-numeric: tabular-nums; }
+.proposal-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* ---------- Document intake ---------- */
+.dropzone { border: 2px dashed var(--border-strong); border-radius: 12px; padding: 28px 16px; text-align: center; background: var(--surface); cursor: pointer; }
+.dropzone.over { border-color: var(--primary); background: var(--primary-soft); }
+.dropzone input { display: none; }
+.warnings { list-style: none; padding: 0; margin: 0 0 12px; display: flex; flex-direction: column; gap: 6px; }
+.warnings li { padding: 8px 12px; border-radius: 8px; font-size: 0.9rem; }
+.warnings .w-error { background: var(--danger-soft); color: var(--danger); }
+.warnings .w-warning { background: var(--warning-soft); color: var(--warning); }
+.warnings .w-info { background: var(--info-soft); color: var(--text-2); }
+.match { font-size: 0.78rem; }
+
+/* ---------- Auditor ---------- */
+.finding { display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: start; padding: 12px 0; border-bottom: 1px solid var(--border); }
+.finding:last-child { border-bottom: 0; }
+.finding h3 { margin: 0 0 4px; font-size: 1rem; }
+.finding p { margin: 0; color: var(--text-2); }
+.sev { font-size: 0.75rem; font-weight: 700; text-transform: uppercase; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
+.sev-high { background: var(--danger-soft); color: var(--danger); }
+.sev-medium { background: var(--warning-soft); color: var(--warning); }
+.sev-low { background: var(--surface-2); color: var(--text-2); border: 1px solid var(--border); }
+@media (max-width: 640px) { .finding { grid-template-columns: 1fr; } }

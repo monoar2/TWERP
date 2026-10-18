@@ -1,0 +1,54 @@
+name: AI eval
+
+on:
+  workflow_dispatch:
+    inputs:
+      only:
+        description: Comma-separated question ids (empty = all)
+        required: false
+      repeat:
+        description: Runs per question
+        required: false
+        default: "1"
+  schedule:
+    - cron: "0 9 * * 1"
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: erp
+          POSTGRES_PASSWORD: erp
+          POSTGRES_DB: erp
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U erp"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      EVAL_DATABASE_URL: postgres://erp:erp@localhost:5432/postgres
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      EVAL_MIN_ACCURACY: "0.8"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - name: Run eval
+        env:
+          ONLY: ${{ inputs.only }}
+          REPEAT: ${{ inputs.repeat || '1' }}
+        run: pnpm --filter @erp/api eval ${ONLY:+--only "$ONLY"} --repeat "$REPEAT"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ai-eval
+          path: apps/api/evals/results/
